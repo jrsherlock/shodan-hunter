@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Community query library · shodan-hunter{% endblock %}
+{% block content %}
+
+<h1>Community query library</h1>
+
+<form method="get" action="/library">
+  <div class="field">
+    <label>Search</label>
+    <input class="text" name="q" value="{{ q or '' }}" placeholder="search saved queries, e.g. webcam">
+  </div>
+  <button>Search</button>
+</form>
+<p class="muted small">Saved searches shared by the Shodan community. Free to browse. Click Run to execute one.</p>
+
+{% if library_error %}
+  <div class="banner bad">{{ library_error }}</div>
+{% endif %}
+
+{% if items %}
+  {% for it in items %}
+    <div class="card">
+      <div class="q-item">
+        <div>
+          <strong>{{ it.title or it.query }}</strong>
+          <div class="q-meta">▲ {{ it.votes or 0 }}{% for t in it.tags or [] %} · <span class="chip">{{ t }}</span>{% endfor %}{% if it.timestamp %} · {{ it.timestamp }}{% endif %}</div>
+          <code class="q-query">{{ it.query }}</code>
+          {% if it.description %}<p class="muted small">{{ it.description }}</p>{% endif %}
+        </div>
+        <div>
+          <form class="inline-form" method="post" action="/ask">
+            <input type="hidden" name="prompt" value="(community) {{ it.title or it.query }}">
+            <input type="hidden" name="page" value="1">
+            <input type="hidden" name="override_query" value="{{ it.query }}">
+            <button class="small">Run ▶</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="row">
+    {% if page > 1 %}
+      <a href="/library?q={{ q }}&page={{ page - 1 }}">← previous</a>
+    {% endif %}
+    {% if items | length == 10 %}
+      <a href="/library?q={{ q }}&page={{ page + 1 }}">next →</a>
+    {% endif %}
+  </div>
+
+{% elif not library_error %}
+  <p class="empty">No community queries found.</p>
+{% endif %}
+
+{% endblock %}

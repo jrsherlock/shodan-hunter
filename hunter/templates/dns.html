@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Bulk DNS · shodan-hunter{% endblock %}
+{% block content %}
+
+<h1>Bulk DNS</h1>
+<p class="muted">Forward + reverse DNS via Shodan. Free — no query credits. Paste hostnames and/or IPs separated by commas, spaces, or newlines.</p>
+
+<form method="post" action="/dns">
+  <div class="field">
+    <textarea class="blob" name="blob" rows="4" placeholder="acme.com, 8.8.8.8, mail.acme.com">{{ blob or '' }}</textarea>
+  </div>
+  <button>Resolve</button>
+</form>
+
+{% if result %}
+  {% if result.invalid %}
+    <div class="banner warn">Ignored {{ result.invalid|length }} unrecognized token(s): {{ result.invalid|join(', ') }}</div>
+  {% endif %}
+
+  {% if result.resolve %}
+    <h2>Forward (hostname → IP)</h2>
+    <table class="lined">
+      <thead>
+        <tr>
+          <th>Hostname</th>
+          <th>Resolved IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for host, ip in result.resolve.items() %}
+          <tr>
+            <td><code>{{ host }}</code></td>
+            <td>
+              {% if ip %}
+                <a href="/host/{{ ip }}"><code>{{ ip }}</code></a>
+              {% else %}
+                <span class="muted">no A record</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if result.reverse %}
+    <h2>Reverse (IP → hostnames)</h2>
+    <table class="lined">
+      <thead>
+        <tr>
+          <th>IP</th>
+          <th>Hostnames</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ip, names in result.reverse.items() %}
+          <tr>
+            <td><a href="/host/{{ ip }}"><code>{{ ip }}</code></a></td>
+            <td>
+              {% if names %}
+                {% for n in names %}<code>{{ n }}</code> {% endfor %}
+              {% else %}
+                <span class="muted">no PTR</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if not result.resolve and not result.reverse and not result.invalid %}
+    <p class="empty">Nothing to resolve.</p>
+  {% endif %}
+{% endif %}
+
+{% endblock %}

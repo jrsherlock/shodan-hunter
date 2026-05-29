@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}log · shodan-hunter{% endblock %}
+{% block content %}
+<section>
+  <h1>{% if mine %}My{% else %}Team{% endif %} query log</h1>
+  <p class="muted">
+    {% if mine %}<a href="/log">→ show whole team</a>{% else %}<a href="/log?mine=1">→ show only mine</a>{% endif %}
+  </p>
+</section>
+
+{% if rows %}
+<table class="lined">
+  <thead><tr><th>When</th><th>User</th><th>Prompt</th><th>Generated query</th><th>Results</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="muted">{{ r.ts | epoch_local }}</td>
+        <td><code>{{ r.username }}</code></td>
+        <td>{{ r.prompt }}</td>
+        <td>{% if r.query %}<code>{{ r.query }}</code>{% else %}—{% endif %}</td>
+        <td>
+          {% if r.error %}<span class="bad">{{ r.error[:100] }}</span>
+          {% elif r.result_total is not none %}<span class="chip">{{ r.result_total }}</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No queries logged yet.</p>
+{% endif %}
+{% endblock %}

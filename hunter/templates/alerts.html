@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Alerts · shodan-hunter{% endblock %}
+{% block content %}
+
+<h1>Network alerts</h1>
+<p class="muted">Register IP ranges for continuous monitoring. Shodan watches them and flags new services, expired certs, matching CVEs, and more. Management is free; each alert consumes your plan's monitored-IP pool.</p>
+
+{% if not enabled %}
+<div class="banner warn">Network alerts are disabled. Set <code>SH_ENABLE_ALERTS=1</code> in .env and restart.</div>
+{% else %}
+
+{% if alerts_error %}
+<div class="banner bad">{{ alerts_error }}</div>
+{% endif %}
+
+<section class="card">
+  <h2>New alert</h2>
+  <form method="post" action="/alerts">
+    <div class="field">
+      <label>Name</label>
+      <input class="text" name="name" placeholder="Client netblock — Acme prod" required>
+    </div>
+    <div class="field">
+      <label>IPs / CIDRs to monitor</label>
+      <textarea class="blob" name="ips" rows="2" placeholder="203.0.113.0/24, 198.51.100.10" required></textarea>
+    </div>
+    {% if triggers %}
+    <p class="muted small">Triggers (optional):</p>
+    <div class="checks">
+      {% for t in triggers %}
+      <label title="{{ t.description or t.rule }}"><input type="checkbox" name="triggers" value="{{ t.name }}"> {{ t.name }}</label>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <button>Create alert</button>
+  </form>
+</section>
+
+{% if not alerts %}
+<p class="empty">No alerts registered yet.</p>
+{% else %}
+{% for a in alerts %}
+<section class="card">
+  <div class="row spread">
+    <h2>{{ a.name or '(unnamed)' }}</h2>
+    <form class="inline-form" method="post" action="/alerts/{{ a.id }}/delete" onsubmit="return confirm('Delete this alert?')"><button class="small danger">Delete</button></form>
+  </div>
+  <dl class="kv">
+    <dt>ID</dt><dd><code>{{ a.id }}</code></dd>
+    <dt>Monitored</dt><dd>{% if a.ips %}{% for ip in a.ips %}<code>{{ ip }}</code> {% endfor %}{% else %}<span class="muted">—</span>{% endif %}</dd>
+    <dt>Size</dt><dd>{{ a.size or (a.ips|length) }}</dd>
+    <dt>Created by</dt><dd>{{ a.created_by or '—' }}</dd>
+    <dt>Expires</dt><dd>{% if a.expires %}{{ a.expires }}{% else %}<span class="muted">never</span>{% endif %}</dd>
+  </dl>
+  <p class="muted small">Triggers:</p>
+  <div class="row">
+    {% if a.triggers %}
+      {% for tn in a.triggers %}<span class="chip good">{{ tn }} <form class="inline-form" method="post" action="/alerts/{{ a.id }}/trigger"><input type="hidden" name="trigger" value="{{ tn }}"><input type="hidden" name="enabled" value=""><button class="small">×</button></form></span> {% endfor %}
+    {% else %}
+      <span class="muted small">none enabled</span>
+    {% endif %}
+    {% if triggers %}
+    <form class="inline-form" method="post" action="/alerts/{{ a.id }}/trigger"><select name="trigger">{% for t in triggers %}{% if t.name not in a.triggers %}<option value="{{ t.name }}">{{ t.name }}</option>{% endif %}{% endfor %}</select><input type="hidden" name="enabled" value="1"><button class="small">+ enable</button></form>
+    {% endif %}
+  </div>
+</section>
+{% endfor %}
+{% endif %}
+
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,5 @@
+# Test-only dependencies for the shodan-hunter pytest suite.
+# Install into the project venv:  .venv/bin/python -m pip install -r requirements-dev.txt
+# Run the suite:                  .venv/bin/python -m pytest -q
+pytest>=8.0
+httpx>=0.27   # required by fastapi.testclient.TestClient

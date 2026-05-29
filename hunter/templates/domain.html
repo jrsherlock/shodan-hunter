@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Domain recon{% if domain %} · {{ domain }}{% endif %} · shodan-hunter{% endblock %}
+{% block content %}
+
+<h1>Domain recon</h1>
+
+<form method="get" action="/domain">
+  <div class="field">
+    <label>Domain</label>
+    <input class="text" name="q" value="{{ domain or '' }}" placeholder="acme.com" autofocus>
+  </div>
+  <button>Look up</button>
+</form>
+<p class="muted small">Subdomains + passive DNS from Shodan. Costs 1 query credit (cached 6h).</p>
+
+{% if domain_data and not domain_data.no_data %}
+
+  <div class="row spread">
+    <h2>{{ domain_data.domain }}</h2>
+    <span class="row">
+      {% if domain_data._cache == 'hit' %}
+        <span class="chip">cache hit</span>
+      {% else %}
+        <span class="chip warn">1 credit spent</span>
+      {% endif %}
+      <span class="muted">{{ domain_data.subdomains | length }} subdomains</span>
+    </span>
+  </div>
+
+  {% if domain_data.tags %}
+    <div class="row">
+      {% for tag in domain_data.tags %}
+        <span class="chip">{{ tag }}</span>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if domain_data.data %}
+    <table class="lined">
+      <thead>
+        <tr>
+          <th>Subdomain</th>
+          <th>Type</th>
+          <th>Value</th>
+          <th>Ports</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rec in domain_data.data %}
+          <tr>
+            <td>
+              <code>{% if rec.subdomain %}{{ rec.subdomain }}.{{ domain_data.domain }}{% else %}{{ domain_data.domain }}{% endif %}</code>
+            </td>
+            <td><code>{{ rec.type }}</code></td>
+            <td>
+              {% if rec.type in ['A', 'AAAA'] %}
+                <a href="/host/{{ rec.value }}"><code>{{ rec.value }}</code></a>
+              {% else %}
+                <code>{{ rec.value }}</code>
+              {% endif %}
+            </td>
+            <td>
+              {% for p in rec.ports or [] %}<span class="chip">{{ p }}</span> {% endfor %}
+            </td>
+            <td><span class="muted small">{{ rec.last_seen or '—' }}</span></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+
+  {% if domain_data.more %}
+    <p class="muted small">More records available (paginated).</p>
+  {% endif %}
+
+{% elif domain_data and domain_data.no_data %}
+
+  <div class="banner warn">Shodan has no passive-DNS record for {{ domain_data.domain }}. ({{ domain_data.message }})</div>
+
+{% else %}
+
+  <p class="muted">Enter a domain above to look up its subdomains and passive DNS records — e.g. <code>google.com</code> or <code>shodan.io</code>.</p>
+
+{% endif %}
+
+{% endblock %}

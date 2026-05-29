@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ ip }} · shodan-hunter{% endblock %}
+{% block content %}
+
+<section>
+  <p class="muted"><a href="/">← back to ask</a></p>
+  <h1>Host <code>{{ ip }}</code></h1>
+  <p class="muted">
+    {% if host._cache == 'hit' %}<span class="chip">cache hit</span>{% else %}<span class="chip warn">1 credit spent</span>{% endif %}
+    {% if is_honeypot %}
+      <span class="chip hp" title="flagged as a honeypot/decoy by Shodan (honeypot tag)">🍯 likely honeypot</span>
+    {% endif %}
+    <a class="muted" href="?refresh=1">force refresh</a>
+  </p>
+</section>
+
+{% if host.no_data %}
+<div class="banner warn">Shodan has no data on this IP. ({{ host.message }})</div>
+{% endif %}
+
+<section class="grid-2">
+  <div class="card">
+    <h2>Identity</h2>
+    <dl class="kv">
+      <dt>Org</dt><dd>{{ host.org or '—' }}</dd>
+      <dt>ISP</dt><dd>{{ host.isp or '—' }}</dd>
+      <dt>ASN</dt><dd>{{ host.asn or '—' }}</dd>
+      <dt>OS</dt><dd>{{ host.os or '—' }}</dd>
+      <dt>Country</dt><dd>{{ host.country_name or host.country_code or '—' }}{% if host.city %} · {{ host.city }}{% endif %}</dd>
+      <dt>Last seen</dt><dd class="muted">{{ host.last_update or '—' }}</dd>
+    </dl>
+  </div>
+  <div class="card">
+    <h2>Reach</h2>
+    {% if host.hostnames %}
+      <p><strong>Hostnames</strong></p>
+      <ul class="tags">{% for h in host.hostnames %}<li><code>{{ h }}</code></li>{% endfor %}</ul>
+    {% endif %}
+    {% if host.ports %}
+      <p><strong>Ports ({{ host.ports|length }})</strong></p>
+      <ul class="tags">{% for p in host.ports|sort %}<li><code>{{ p }}</code></li>{% endfor %}</ul>
+    {% endif %}
+    {% set vulns = host.vulns if host.vulns is iterable and host.vulns is not string else [] %}
+    {% if vulns %}
+      <p><strong>Vulnerabilities ({{ vulns|length }})</strong></p>
+      <ul class="tags">{% for v in vulns|sort %}<li><code>{{ v }}</code></li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+</section>
+
+{% if idb %}
+<section class="card">
+  <h2>Free intel <span class="chip good">InternetDB · 0 credits</span></h2>
+  {% if idb.ports or idb.vulns or idb.hostnames or idb.tags or idb.cpes %}
+  <div class="grid-2">
+    <div>
+      {% if idb.ports %}
+        <p><strong>Open ports ({{ idb.ports|length }})</strong></p>
+        <ul class="tags">{% for p in idb.ports|sort %}<li><code>{{ p }}</code></li>{% endfor %}</ul>
+      {% endif %}
+      {% if idb.hostnames %}
+        <p><strong>Hostnames</strong></p>
+        <ul class="tags">{% for h in idb.hostnames %}<li><code>{{ h }}</code></li>{% endfor %}</ul>
+      {% endif %}
+      {% if idb.tags %}
+        <p><strong>Tags</strong></p>
+        <div>{% for t in idb.tags %}<span class="chip">{{ t }}</span> {% endfor %}</div>
+      {% endif %}
+    </div>
+    <div>
+      {% if idb.vulns %}
+        <p><strong>CVEs ({{ idb.vulns|length }})</strong></p>
+        <ul class="tags">{% for v in idb.vulns|sort %}<li><code class="bad">{{ v }}</code></li>{% endfor %}</ul>
+      {% endif %}
+      {% if idb.cpes %}
+        <p><strong>CPEs</strong></p>
+        <ul class="tags">{% for c in idb.cpes %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+    <p class="muted">InternetDB has no record for this IP.</p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if host.data %}
+<section>
+  <h2>Services</h2>
+  {% for svc in host.data %}
+    <details class="card service">
+      <summary>
+        <strong>:{{ svc.port }}/{{ svc.transport or 'tcp' }}</strong>
+        {% if svc.product %} — {{ svc.product }}{% if svc.version %} <span class="muted">{{ svc.version }}</span>{% endif %}{% endif %}
+        {% if svc.ssl %}<span class="chip">TLS</span>{% endif %}
+        {% if svc.http %}<span class="chip">HTTP {{ svc.http.status or '' }}</span>{% endif %}
+        {% if svc.vulns %}<span class="chip bad">{{ (svc.vulns or {})|length }} CVE</span>{% endif %}
+      </summary>
+      {% if svc.http and svc.http.title %}<p><strong>Title:</strong> {{ svc.http.title }}</p>{% endif %}
+      {% if svc.http and svc.http.server %}<p><strong>Server:</strong> <code>{{ svc.http.server }}</code></p>{% endif %}
+      {% if svc.ssl and svc.ssl.cert %}
+        <p><strong>Cert subject:</strong> <code>{{ svc.ssl.cert.subject }}</code></p>
+        <p><strong>Expires:</strong> <code>{{ svc.ssl.cert.expires }}</code></p>
+      {% endif %}
+      {% if svc.data %}<pre class="banner-box">{{ svc.data[:2500] }}</pre>{% endif %}
+    </details>
+  {% endfor %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Raw JSON</h2>
+  <details><summary>show</summary><pre class="json">{{ host | tojson(indent=2) }}</pre></details>
+</section>
+
+{% endblock %}

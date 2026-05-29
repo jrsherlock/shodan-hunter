@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}shodan-hunter{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">shodan-hunter</a>
+    <nav>
+      <a href="/">Ask</a>
+      <a href="/domain">Domain</a>
+      <a href="/dns">DNS</a>
+      <a href="/library">Library</a>
+      <a href="/scan">Scan</a>
+      <a href="/alerts">Alerts</a>
+      <a href="/log">Team log</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="topbar-right">
+      {% if not status.shodan %}<span class="chip bad">no Shodan key</span>{% endif %}
+      {% if not status.azure_openai %}<span class="chip bad">no Azure OpenAI</span>{% endif %}
+      {% if budget.enabled %}
+        <span class="chip{% if budget.exceeded %} bad{% elif budget.cap - budget.used < 20 %} warn{% endif %}"
+              title="Team daily spend vs. configured cap (SH_DAILY_BUDGET)">
+          team today {{ budget.used }}/{{ budget.cap }}
+        </span>
+      {% endif %}
+      {% if shodan_info %}
+        <span class="chip{% if shodan_info.query_credits is not none and shodan_info.query_credits < 500 %} warn{% endif %}"
+              title="Live query credits remaining on the Shodan account (cached 5 min)">
+          shodan: {{ shodan_info.query_credits if shodan_info.query_credits is not none else '?' }} q
+          {%- if shodan_info.scan_credits is not none %} · {{ shodan_info.scan_credits }} scan{% endif %}
+          {%- if shodan_info.plan %} · {{ shodan_info.plan }}{% endif %}
+        </span>
+      {% endif %}
+      {% if user %}<span class="chip">{{ user }}</span>{% endif %}
+    </div>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>shodan-hunter · internal team tool · your Shodan key, your liability</footer>
+</body>
+</html>

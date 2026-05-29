@@ -1,0 +1,463 @@
+"""FastAPI app: chat-style NL → Shodan UI."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from . import config, db, internetdb, llm, monitor, recon, scans, shodan_api
+from .auth import current_user
+from .db import BudgetExceeded
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+HERE = Path(__file__).parent
+templates = Jinja2Templates(directory=str(HERE / "templates"))
+
+
+def _epoch_local(ts) -> str:
+    """Format an int epoch as 'YYYY-MM-DD HH:MM' in local time."""
+    from datetime import datetime
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError):
+        return str(ts)
+
+
+templates.env.filters["epoch_local"] = _epoch_local
+
+app = FastAPI(title="shodan-hunter", version="0.3.0")
+app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
+
+
+EXAMPLES = [
+    "Find exposed RDP on hosts owned by org \"Acme Industries\"",
+    "Show me Apache servers in Germany running version 2.4.49",
+    "Hosts with Log4Shell CVE-2021-44228",
+    "Open Elasticsearch instances with no authentication",
+    "Servers presenting SSL certificates for *.example.com",
+    "Unpatched Exchange servers in the US",
+    "Webcams indexed in Iowa",
+    "MongoDB databases on port 27017 in Canada",
+]
+
+
+def _ctx(request: Request, user: str, **extra) -> dict:
+    try:
+        shodan_info = shodan_api.api_info()
+    except Exception:
+        shodan_info = None
+    return {
+        "request": request,
+        "user": user,
+        "status": config.status(),
+        "budget": db.budget_status(),
+        "shodan_info": shodan_info,
+        "examples": EXAMPLES,
+        **extra,
+    }
+
+
+# ── error pages ──────────────────────────────────────────────────────────
+
+
+@app.exception_handler(shodan_api.ShodanNotConfigured)
+async def _h_no_shodan(request: Request, exc: shodan_api.ShodanNotConfigured):
+    return _err(request, "Shodan not configured", str(exc), 503)
+
+
+@app.exception_handler(shodan_api.ShodanError)
+async def _h_shodan(request: Request, exc: shodan_api.ShodanError):
+    return _err(request, "Shodan lookup failed", str(exc), 502)
+
+
+@app.exception_handler(llm.LLMNotConfigured)
+async def _h_no_llm(request: Request, exc: llm.LLMNotConfigured):
+    return _err(request, "Azure OpenAI not configured", str(exc), 503)
+
+
+@app.exception_handler(llm.LLMError)
+async def _h_llm(request: Request, exc: llm.LLMError):
+    return _err(request, "LLM error", str(exc), 502)
+
+
+@app.exception_handler(BudgetExceeded)
+async def _h_budget(request: Request, exc: BudgetExceeded):
+    return _err(request, "Daily budget exceeded", str(exc), 429)
+
+
+def _err(request: Request, title: str, detail: str, code: int):
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"error": title, "detail": detail}, status_code=code)
+    # No auth on error pages so they always render
+    return templates.TemplateResponse(
+        request, "error.html",
+        {"request": request, "user": None, "status": config.status(),
+         "budget": db.budget_status(), "examples": EXAMPLES,
+         "title": title, "detail": detail},
+        status_code=code,
+    )
+
+
+# ── pages ────────────────────────────────────────────────────────────────
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request, user: str = Depends(current_user)):
+    return templates.TemplateResponse(
+        request, "chat.html",
+        _ctx(request, user, prompt="", llm_result=None, search=None, override_query=None,
+             recent=db.recent_audit(limit=10, username=user)),
+    )
+
+
+@app.post("/ask", response_class=HTMLResponse)
+async def ask(
+    request: Request,
+    user: str = Depends(current_user),
+    prompt: str = Form(...),
+    page: int = Form(1),
+    override_query: str = Form(""),
+):
+    """The main chat handler. Either translate prompt → query → search, or
+    if the user supplied `override_query`, skip the LLM and search directly."""
+    prompt = (prompt or "").strip()
+    override = (override_query or "").strip()
+    llm_result = None
+    search_result = None
+    error_msg = None
+
+    if override:
+        query_to_run = override
+        llm_result = {
+            "query": override,
+            "rationale": "(user-supplied query — LLM bypassed)",
+            "warnings": [],
+            "prompt": prompt,
+        }
+    else:
+        try:
+            llm_result = llm.prompt_to_query(prompt)
+            query_to_run = llm_result["query"]
+        except (llm.LLMError, llm.LLMNotConfigured) as e:
+            db.log_audit(username=user, prompt=prompt, query=None,
+                         rationale=None, result_total=None, error=str(e))
+            raise
+
+    try:
+        search_result = shodan_api.search(query_to_run, page=page)
+        total = search_result.get("total", 0)
+    except (shodan_api.ShodanError, shodan_api.ShodanNotConfigured) as e:
+        db.log_audit(username=user, prompt=prompt, query=query_to_run,
+                     rationale=(llm_result or {}).get("rationale"),
+                     result_total=None, error=str(e))
+        raise
+
+    # Free enrichment (no query credits): InternetDB vulns/tags/ports, honeypot
+    # scores, and facet aggregates. Each block is best-effort — a failure here
+    # must never blank out the result table the user already paid for.
+    matches = search_result.get("matches") or []
+    if matches:
+        ips = [m.get("ip_str") for m in matches if m.get("ip_str")]
+        try:
+            idb = internetdb.lookup_many(ips)
+        except Exception:
+            idb = {}
+        # Honeypot flag comes from the free `honeypot` tag (InternetDB / banner),
+        # not per-IP honeyscore — Shodan retired that lab endpoint.
+        recon.annotate_matches(matches, idb, {}, config.HONEYPOT_THRESHOLD)
+
+    try:
+        facet_groups = recon.facet_chartdata(
+            shodan_api.facet_summary(query_to_run, recon.DEFAULT_FACETS)
+        )
+    except Exception:
+        facet_groups = []
+
+    spent = 0 if search_result.get("_cache") == "hit" else 1
+    db.log_audit(
+        username=user, prompt=prompt, query=query_to_run,
+        rationale=(llm_result or {}).get("rationale"),
+        result_total=total, error=error_msg, action="search", credits=spent,
+    )
+
+    return templates.TemplateResponse(
+        request, "chat.html",
+        _ctx(request, user, prompt=prompt, llm_result=llm_result,
+             search=search_result, page=page, facets=facet_groups,
+             override_query=override,
+             recent=db.recent_audit(limit=10, username=user)),
+    )
+
+
+@app.get("/host/{ip}", response_class=HTMLResponse)
+async def host_page(request: Request, ip: str, user: str = Depends(current_user),
+                    refresh: bool = False):
+    data = shodan_api.host(ip, use_cache=not refresh)
+    # Free side-channel context: InternetDB costs no query credits.
+    try:
+        idb = internetdb.lookup(ip)
+    except Exception:
+        idb = None
+    host_tags = list(data.get("tags") or []) + list((idb or {}).get("tags") or [])
+    db.log_audit(
+        username=user, prompt=f"host {ip}", query=None, rationale=None,
+        result_total=len(data.get("ports") or []),
+        error=data.get("message") if data.get("no_data") else None,
+        action="host", credits=0 if data.get("_cache") == "hit" else 1,
+    )
+    return templates.TemplateResponse(
+        request, "host.html",
+        _ctx(request, user, ip=ip, host=data, idb=idb,
+             is_honeypot=recon.honeypot_from_tags(host_tags)),
+    )
+
+
+@app.get("/log", response_class=HTMLResponse)
+async def audit_log_page(request: Request, user: str = Depends(current_user),
+                         mine: bool = False, limit: int = 100):
+    rows = db.recent_audit(limit=limit, username=user if mine else None)
+    return templates.TemplateResponse(
+        request, "log.html",
+        _ctx(request, user, rows=rows, mine=mine),
+    )
+
+
+# ── domain recon (1 credit) ─────────────────────────────────────────────────
+
+
+def _domain_page(request: Request, user: str, domain: str):
+    domain = (domain or "").strip()
+    data = None
+    if domain:
+        data = shodan_api.domain_info(domain)
+        subs = data.get("subdomains") or []
+        db.log_audit(
+            username=user, prompt=f"domain {domain}", query=domain, rationale=None,
+            result_total=len(subs),
+            error=data.get("message") if data.get("no_data") else None,
+            action="domain", credits=0 if data.get("_cache") == "hit" else 1,
+        )
+    return templates.TemplateResponse(
+        request, "domain.html",
+        _ctx(request, user, domain=domain, domain_data=data),
+    )
+
+
+@app.get("/domain", response_class=HTMLResponse)
+async def domain_form(request: Request, user: str = Depends(current_user),
+                      q: str = Query("")):
+    return _domain_page(request, user, q)
+
+
+@app.get("/domain/{name}", response_class=HTMLResponse)
+async def domain_named(request: Request, name: str, user: str = Depends(current_user)):
+    return _domain_page(request, user, name)
+
+
+# ── bulk DNS resolve / reverse (free) ────────────────────────────────────────
+
+
+@app.get("/dns", response_class=HTMLResponse)
+async def dns_form(request: Request, user: str = Depends(current_user)):
+    return templates.TemplateResponse(
+        request, "dns.html", _ctx(request, user, blob="", result=None),
+    )
+
+
+@app.post("/dns", response_class=HTMLResponse)
+async def dns_run(request: Request, user: str = Depends(current_user),
+                  blob: str = Form("")):
+    result = recon.bulk_dns(blob)
+    n = len(result.get("resolve") or {}) + len(result.get("reverse") or {})
+    db.log_audit(
+        username=user, prompt=f"dns lookup ({n} items)", query=None, rationale=None,
+        result_total=n, error=None, action="dns", credits=0,
+    )
+    return templates.TemplateResponse(
+        request, "dns.html", _ctx(request, user, blob=blob, result=result),
+    )
+
+
+# ── on-demand scan (scan credits; authorization-gated) ───────────────────────
+
+
+def _scan_ctx(request: Request, user: str, **extra):
+    return _ctx(request, user, enabled=config.SCAN_ENABLED,
+                allowlist=config.SCAN_ALLOWLIST, recent=db.recent_scans(limit=25),
+                **extra)
+
+
+@app.get("/scan", response_class=HTMLResponse)
+async def scan_form(request: Request, user: str = Depends(current_user)):
+    return templates.TemplateResponse(
+        request, "scan.html",
+        _scan_ctx(request, user, submitted=None, error=None, status_detail=None),
+    )
+
+
+@app.post("/scan", response_class=HTMLResponse)
+async def scan_submit(request: Request, user: str = Depends(current_user),
+                      targets: str = Form(""), confirm: str = Form("")):
+    if not config.SCAN_ENABLED:
+        raise HTTPException(403, "On-demand scanning is disabled (set SH_ENABLE_SCAN=1).")
+    submitted = error = None
+    try:
+        submitted = scans.submit(targets, user=user, user_confirmed=bool(confirm))
+        db.log_audit(username=user, prompt=f"scan {targets}", query=None,
+                     rationale=submitted.get("authorization"),
+                     result_total=recon.count_hosts(submitted["targets"]),
+                     error=None, action="scan", credits=0)
+    except (scans.ScanInputError, scans.ScanNotAuthorized, shodan_api.ShodanError) as e:
+        error = str(e)
+        db.log_audit(username=user, prompt=f"scan {targets}", query=None,
+                     rationale=None, result_total=None, error=error,
+                     action="scan", credits=0)
+    return templates.TemplateResponse(
+        request, "scan.html",
+        _scan_ctx(request, user, submitted=submitted, error=error, status_detail=None),
+    )
+
+
+@app.get("/scan/{scan_id}", response_class=HTMLResponse)
+async def scan_status_page(request: Request, scan_id: str,
+                           user: str = Depends(current_user)):
+    detail = error = None
+    try:
+        detail = scans.refresh(scan_id)
+    except shodan_api.ShodanError as e:
+        error = str(e)
+    return templates.TemplateResponse(
+        request, "scan.html",
+        _scan_ctx(request, user, submitted=None, error=error, status_detail=detail),
+    )
+
+
+# ── network alerts (management; no query credits) ────────────────────────────
+
+
+def _alerts_ctx(request: Request, user: str, **extra):
+    alerts: list = []
+    triggers: list = []
+    err = None
+    if config.ALERTS_ENABLED:
+        try:
+            alerts = monitor.list_with_meta()
+            triggers = monitor.triggers_catalog()
+        except shodan_api.ShodanError as e:
+            err = str(e)
+    return _ctx(request, user, enabled=config.ALERTS_ENABLED,
+                alerts=alerts, triggers=triggers, alerts_error=err, **extra)
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+async def alerts_page(request: Request, user: str = Depends(current_user)):
+    return templates.TemplateResponse(request, "alerts.html",
+                                      _alerts_ctx(request, user))
+
+
+@app.post("/alerts")
+async def alerts_create(request: Request, user: str = Depends(current_user),
+                        name: str = Form(...), ips: str = Form(...),
+                        triggers: list[str] = Form([])):
+    if not config.ALERTS_ENABLED:
+        raise HTTPException(403, "Alerts are disabled (set SH_ENABLE_ALERTS=1).")
+    try:
+        res = monitor.create(name, ips, user=user, triggers=triggers)
+        db.log_audit(username=user, prompt=f"create alert {name!r} on {ips}",
+                     query=None, rationale=None,
+                     result_total=len(res.get("targets") or []), error=None,
+                     action="alert", credits=0)
+    except (ValueError, shodan_api.ShodanError) as e:
+        db.log_audit(username=user, prompt=f"create alert {name!r}", query=None,
+                     rationale=None, result_total=None, error=str(e),
+                     action="alert", credits=0)
+    return RedirectResponse("/alerts", status_code=303)
+
+
+@app.post("/alerts/{aid}/delete")
+async def alerts_delete(aid: str, user: str = Depends(current_user)):
+    if not config.ALERTS_ENABLED:
+        raise HTTPException(403, "Alerts are disabled.")
+    try:
+        monitor.delete(aid)
+        db.log_audit(username=user, prompt=f"delete alert {aid}", query=None,
+                     rationale=None, result_total=None, error=None,
+                     action="alert", credits=0)
+    except shodan_api.ShodanError as e:
+        db.log_audit(username=user, prompt=f"delete alert {aid}", query=None,
+                     rationale=None, result_total=None, error=str(e),
+                     action="alert", credits=0)
+    return RedirectResponse("/alerts", status_code=303)
+
+
+@app.post("/alerts/{aid}/trigger")
+async def alerts_trigger(aid: str, user: str = Depends(current_user),
+                         trigger: str = Form(...), enabled: str = Form("")):
+    if not config.ALERTS_ENABLED:
+        raise HTTPException(403, "Alerts are disabled.")
+    try:
+        monitor.set_trigger(aid, trigger, bool(enabled))
+    except shodan_api.ShodanError:
+        pass
+    return RedirectResponse("/alerts", status_code=303)
+
+
+# ── community query library (free) ───────────────────────────────────────────
+
+
+@app.get("/library", response_class=HTMLResponse)
+async def library_page(request: Request, user: str = Depends(current_user),
+                       q: str = Query(""), page: int = Query(1)):
+    q = (q or "").strip()
+    library_error = None
+    items: list = []
+    try:
+        data = shodan_api.query_search(q, page=page) if q else shodan_api.community_queries(page=page)
+        items = (data.get("matches") if isinstance(data, dict) else data) or []
+    except shodan_api.ShodanError as e:
+        library_error = str(e)
+    return templates.TemplateResponse(
+        request, "library.html",
+        _ctx(request, user, q=q, page=page, items=items, library_error=library_error),
+    )
+
+
+# ── small JSON helpers ────────────────────────────────────────────────────
+
+
+@app.get("/api/count")
+async def api_count(q: str = Query(..., min_length=1),
+                    user: str = Depends(current_user)):
+    return shodan_api.count(q)
+
+
+@app.get("/api/info")
+async def api_info(user: str = Depends(current_user)):
+    return {
+        **shodan_api.api_info(),
+        "budget": db.budget_status(),
+        "config": config.status(),
+    }
+
+
+@app.get("/idb/{ip}")
+async def idb_json(ip: str, user: str = Depends(current_user)):
+    """Free InternetDB lookup — what Shodan already knows about an IP, 0 credits."""
+    return {"ip": ip, **internetdb.lookup(ip)}
+
+
+@app.get("/api/honeyscore/{ip}")
+async def honeyscore_json(ip: str, user: str = Depends(current_user)):
+    """Free honeypot probability (0.0–1.0) for an IP, 0 credits."""
+    return {"ip": ip, "honeyscore": shodan_api.honeyscore(ip)}
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True, **config.status()}

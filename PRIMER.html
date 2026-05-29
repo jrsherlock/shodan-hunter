@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>shodan-hunter · operator primer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --void:#070a0e; --panel:#0d141b; --panel-2:#111a22; --raise:#16222c;
+    --line:#1d2a34; --line-2:#273742;
+    --ink:#dbe7ec; --soft:#9fb2bc; --muted:#647a86;
+    --cyan:#3fe3d1; --cyan-deep:#15837a; --cyan-glow:rgba(63,227,209,.18);
+    --amber:#ffb24d; --amber-deep:#8a5a16;
+    --red:#ff5d57; --red-deep:#7a201d;
+    --green:#5fe08a; --green-deep:#1f6e3f;
+    --display:"Chakra Petch",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,monospace;
+    --body:"IBM Plex Sans",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--void); color:var(--ink);
+    font-family:var(--body); font-weight:300; line-height:1.65; font-size:16px;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(900px 520px at 78% -8%, var(--cyan-glow), transparent 60%),
+      radial-gradient(720px 460px at 5% 8%, rgba(255,178,77,.07), transparent 55%),
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:auto, auto, 46px 46px, 46px 46px;
+    background-position:0 0,0 0,-1px -1px,-1px -1px;
+  }
+  /* faint scanlines + grain overlay */
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:1; opacity:.5;
+    background:repeating-linear-gradient(to bottom, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+    mix-blend-mode:overlay;
+  }
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:1; opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  ::selection{background:var(--cyan); color:#04110f}
+  a{color:var(--cyan); text-decoration:none}
+  a:hover{text-decoration:underline; text-underline-offset:3px}
+
+  /* ── classification strip ─────────────────────────────────────────── */
+  .classbar{
+    position:sticky; top:0; z-index:30;
+    display:flex; gap:1.4em; justify-content:center; align-items:center; flex-wrap:wrap;
+    font-family:var(--mono); font-size:10.5px; letter-spacing:.32em; text-transform:uppercase;
+    color:var(--amber); background:rgba(7,10,14,.86); backdrop-filter:blur(7px);
+    border-bottom:1px solid var(--line-2); padding:.55em 1em;
+  }
+  .classbar b{color:var(--ink); font-weight:500}
+  .classbar .dot{color:var(--cyan)}
+
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px; position:relative; z-index:2}
+
+  /* ── reveal animation ─────────────────────────────────────────────── */
+  .rise{opacity:0; transform:translateY(22px); animation:rise .9s cubic-bezier(.16,.84,.34,1) forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+  @media (prefers-reduced-motion:reduce){
+    .rise{animation:none; opacity:1; transform:none}
+    .cursor,.sweep,.pulse{animation:none!important}
+  }
+
+  /* ── hero ─────────────────────────────────────────────────────────── */
+  header.hero{padding:74px 0 30px}
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:.4em; text-transform:uppercase;
+    color:var(--cyan); margin:0 0 18px; display:flex; align-items:center; gap:.8em;
+  }
+  .eyebrow::before{content:""; width:30px; height:1px; background:var(--cyan); display:inline-block}
+  h1.title{
+    font-family:var(--display); font-weight:700; font-size:clamp(46px,9vw,108px);
+    line-height:.92; letter-spacing:-.01em; margin:0;
+    text-shadow:0 0 38px var(--cyan-glow);
+  }
+  h1.title .hl{color:var(--cyan)}
+  h1.title .honey{color:var(--amber); -webkit-text-stroke:0; text-shadow:0 0 22px rgba(255,178,77,.35)}
+  .lede{
+    max-width:62ch; margin:26px 0 0; font-size:clamp(17px,2.1vw,21px); color:var(--soft); font-weight:300;
+  }
+  .lede b{color:var(--ink); font-weight:500}
+  .bootline{
+    font-family:var(--mono); font-size:13.5px; color:var(--soft); margin-top:30px;
+    border-left:2px solid var(--cyan-deep); padding-left:14px;
+  }
+  .bootline .p{color:var(--cyan)}
+  .cursor{display:inline-block; width:9px; height:1.05em; background:var(--cyan); transform:translateY(2px);
+    margin-left:3px; animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .sweep{height:2px; margin-top:34px; border-radius:2px; overflow:hidden;
+    background:linear-gradient(90deg,transparent,var(--line-2),transparent); position:relative}
+  .sweep::after{content:""; position:absolute; inset:0; width:34%;
+    background:linear-gradient(90deg,transparent,var(--cyan),transparent); animation:sweep 3.6s ease-in-out infinite}
+  @keyframes sweep{0%{transform:translateX(-110%)}100%{transform:translateX(330%)}}
+
+  /* ── section scaffolding ──────────────────────────────────────────── */
+  section{padding:54px 0; border-top:1px solid var(--line); position:relative}
+  .kicker{
+    font-family:var(--mono); font-size:11px; letter-spacing:.34em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 8px;
+  }
+  .kicker .idx{color:var(--amber)}
+  h2{font-family:var(--display); font-weight:600; font-size:clamp(26px,4vw,40px); margin:0 0 10px; letter-spacing:-.01em}
+  h2 .accent{color:var(--cyan)}
+  .sub{color:var(--soft); max-width:70ch; margin:0 0 28px; font-weight:300}
+
+  /* ── terminal window cards ────────────────────────────────────────── */
+  .term{
+    background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    border:1px solid var(--line-2); border-radius:12px; overflow:hidden;
+    box-shadow:0 26px 60px -34px rgba(0,0,0,.8), inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .term .bar{
+    display:flex; align-items:center; gap:8px; padding:11px 15px;
+    background:rgba(255,255,255,.02); border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); letter-spacing:.05em;
+  }
+  .term .bar .d{width:10px; height:10px; border-radius:50%; background:var(--line-2)}
+  .term .bar .d.r{background:var(--red)} .term .bar .d.y{background:var(--amber)} .term .bar .d.g{background:var(--green)}
+  .term .bar .fname{margin-left:8px}
+  .term .body{padding:22px 24px}
+
+  /* ── briefing two-col ─────────────────────────────────────────────── */
+  .briefing{display:grid; grid-template-columns:1.55fr 1fr; gap:24px; align-items:start}
+  .briefing p{margin:0 0 14px}
+  .briefing p b{color:var(--ink); font-weight:500}
+  .briefing .isnt{color:var(--muted); font-size:14.5px; border-left:2px solid var(--line-2); padding-left:14px}
+  dl.spec{margin:0; font-family:var(--mono); font-size:13px}
+  dl.spec div{display:flex; justify-content:space-between; gap:14px; padding:9px 0; border-bottom:1px dashed var(--line)}
+  dl.spec div:last-child{border-bottom:0}
+  dl.spec dt{color:var(--muted); letter-spacing:.04em}
+  dl.spec dd{margin:0; color:var(--ink); text-align:right}
+
+  /* ── capability grid ──────────────────────────────────────────────── */
+  .legend{display:flex; gap:18px; flex-wrap:wrap; font-family:var(--mono); font-size:11.5px; color:var(--muted); margin:0 0 22px}
+  .legend span{display:inline-flex; align-items:center; gap:7px}
+  .swatch{width:11px; height:11px; border-radius:3px}
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:16px}
+  .cap{
+    position:relative; background:var(--panel); border:1px solid var(--line); border-radius:11px;
+    padding:20px 20px 18px; overflow:hidden; transition:transform .28s cubic-bezier(.16,.84,.34,1), border-color .28s, box-shadow .28s;
+  }
+  .cap::before{content:attr(data-n); position:absolute; top:10px; right:16px;
+    font-family:var(--display); font-weight:700; font-size:46px; color:var(--line-2); opacity:.55; line-height:1}
+  .cap:hover{transform:translateY(-5px); border-color:var(--cyan-deep); box-shadow:0 22px 44px -28px rgba(0,0,0,.85), 0 0 0 1px var(--cyan-deep)}
+  .cap h3{font-family:var(--display); font-weight:600; font-size:18.5px; margin:2px 0 4px}
+  .cap .route{font-family:var(--mono); font-size:11.5px; color:var(--cyan); margin-bottom:11px; word-break:break-all}
+  .cap p{margin:0 0 11px; font-size:14.5px; color:var(--soft)}
+  .cap .how{font-family:var(--mono); font-size:11.5px; color:var(--muted); border-top:1px dashed var(--line); padding-top:10px}
+  .cap .how b{color:var(--soft); font-weight:500}
+  .chip{display:inline-block; font-family:var(--mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    padding:.28em .6em; border-radius:5px; border:1px solid; font-weight:500}
+  .c-free{color:var(--green); border-color:var(--green-deep); background:rgba(95,224,138,.08)}
+  .c-query{color:var(--amber); border-color:var(--amber-deep); background:rgba(255,178,77,.08)}
+  .c-scan{color:var(--red); border-color:var(--red-deep); background:rgba(255,93,87,.08)}
+
+  /* ── ledger table ─────────────────────────────────────────────────── */
+  table.ledger{width:100%; border-collapse:collapse; font-size:14.5px}
+  table.ledger th, table.ledger td{text-align:left; padding:12px 14px; border-bottom:1px solid var(--line)}
+  table.ledger th{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); font-weight:500}
+  table.ledger td.op{font-family:var(--mono); font-size:13px; color:var(--ink)}
+  table.ledger tr:hover td{background:rgba(255,255,255,.015)}
+  table.ledger td .chip{transform:translateY(-1px)}
+
+  /* ── the .env centerpiece ─────────────────────────────────────────── */
+  .envwrap{display:grid; grid-template-columns:1.2fr 1fr; gap:26px; align-items:start}
+  pre.env{margin:0; font-family:var(--mono); font-size:13.5px; line-height:2.1; color:var(--ink); white-space:pre-wrap; word-break:break-word}
+  pre.env .cm{color:var(--muted)}
+  pre.env .k{color:var(--cyan)}
+  pre.env .v{color:var(--amber)}
+  pre.env .tag{
+    display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; margin-left:10px;
+    border-radius:50%; background:var(--cyan); color:#04110f; font-weight:700; font-size:11px; vertical-align:middle;
+    font-family:var(--mono); box-shadow:0 0 16px var(--cyan-glow)}
+  ol.notes{list-style:none; counter-reset:n; margin:0; padding:0}
+  ol.notes li{position:relative; padding:0 0 16px 38px; margin:0; counter-increment:n; font-size:14.5px; color:var(--soft)}
+  ol.notes li::before{
+    content:counter(n); position:absolute; left:0; top:1px;
+    width:24px; height:24px; border-radius:50%; background:var(--raise); border:1px solid var(--cyan-deep);
+    color:var(--cyan); font-family:var(--mono); font-size:12px; font-weight:700;
+    display:flex; align-items:center; justify-content:center}
+  ol.notes li b{color:var(--ink); font-weight:600}
+  ol.notes code, .inline-code{font-family:var(--mono); font-size:.9em; background:rgba(255,255,255,.05);
+    border:1px solid var(--line-2); border-radius:4px; padding:.08em .42em; color:var(--cyan)}
+  .warn{
+    margin-top:20px; display:flex; gap:14px; align-items:flex-start;
+    background:rgba(255,93,87,.06); border:1px solid var(--red-deep); border-left-width:3px; border-radius:9px; padding:15px 17px;
+  }
+  .warn .ic{font-size:20px; line-height:1.2}
+  .warn p{margin:0; font-size:14px; color:var(--soft)}
+  .warn b{color:var(--red)}
+
+  /* ── session walkthrough ──────────────────────────────────────────── */
+  ol.flow{list-style:none; margin:0; padding:0; counter-reset:f}
+  ol.flow li{position:relative; padding:0 0 26px 52px; counter-increment:f}
+  ol.flow li:last-child{padding-bottom:0}
+  ol.flow li::before{content:counter(f,decimal-leading-zero); position:absolute; left:0; top:-2px;
+    font-family:var(--mono); font-size:14px; font-weight:700; color:var(--cyan);
+    width:34px; height:34px; border:1px solid var(--cyan-deep); border-radius:8px; background:var(--panel);
+    display:flex; align-items:center; justify-content:center}
+  ol.flow li::after{content:""; position:absolute; left:17px; top:34px; bottom:6px; width:1px; background:var(--line-2)}
+  ol.flow li:last-child::after{display:none}
+  ol.flow h4{font-family:var(--display); font-weight:600; font-size:17px; margin:4px 0 4px}
+  ol.flow p{margin:0; color:var(--soft); font-size:14.5px}
+  ol.flow .q{font-family:var(--mono); color:var(--amber); font-size:13px}
+
+  /* ── safety ───────────────────────────────────────────────────────── */
+  .guards{display:grid; grid-template-columns:repeat(2,1fr); gap:14px}
+  .guard{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px}
+  .guard h4{margin:0 0 5px; font-family:var(--display); font-weight:600; font-size:15.5px; color:var(--ink)}
+  .guard h4 .g-ic{color:var(--cyan); margin-right:8px}
+  .guard p{margin:0; font-size:13.5px; color:var(--muted)}
+
+  /* ── footer ───────────────────────────────────────────────────────── */
+  footer{padding:50px 0 70px; border-top:1px solid var(--line)}
+  .runcmd{font-family:var(--mono); font-size:15px; background:var(--panel); border:1px solid var(--line-2);
+    border-radius:10px; padding:16px 18px; color:var(--ink); display:flex; align-items:center; gap:12px}
+  .runcmd .p{color:var(--green)}
+  .foot-note{margin-top:20px; color:var(--muted); font-size:13px; font-family:var(--mono); letter-spacing:.02em}
+
+  @media (max-width:780px){
+    .briefing,.grid,.envwrap,.guards{grid-template-columns:1fr}
+    .classbar{letter-spacing:.2em}
+    body{background-size:auto,auto,32px 32px,32px 32px}
+  }
+</style>
+</head>
+<body>
+
+<div class="classbar">
+  <span><b>INTERNAL</b> RECON CONSOLE</span>
+  <span class="dot">◆</span>
+  <span>SHODAN ToS APPLIES</span>
+  <span class="dot">◆</span>
+  <span>YOUR KEY · <b>YOUR LIABILITY</b></span>
+</div>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <p class="eyebrow rise">Operator Primer · v0.3.0</p>
+    <h1 class="title rise" style="animation-delay:.05s">shodan<span class="hl">·</span>hunter<span class="honey">🍯</span></h1>
+    <p class="lede rise" style="animation-delay:.13s">A friendly team console in front of <b>Shodan</b>. Teammates type plain English; an Azure OpenAI deployment rewrites it into Shodan query syntax; the app runs the search, enriches it for free, and <b>logs every move</b> against a shared key.</p>
+    <div class="bootline rise" style="animation-delay:.2s"><span class="p">analyst@hunter</span>:~$ what's exposed that we'd rather wasn't?<span class="cursor"></span></div>
+    <div class="sweep rise" style="animation-delay:.28s"></div>
+  </header>
+
+  <!-- WHAT IT IS -->
+  <section>
+    <p class="kicker rise"><span class="idx">01</span> / THE BRIEF</p>
+    <h2 class="rise" style="animation-delay:.04s">What it is, <span class="accent">who it's for</span></h2>
+    <p class="sub rise" style="animation-delay:.07s">One shared Shodan key, many analysts, every query attributed. It turns one-shot recon into a team-friendly, auditable, cost-aware workspace.</p>
+    <div class="briefing rise" style="animation-delay:.1s">
+      <div class="term">
+        <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="fname">— mission.md</span></div>
+        <div class="body">
+          <p><b>The audience:</b> a security / recon team — pentesters, threat analysts, blue-teamers — who share a single Shodan Small-Business key and need to see each other's work without each holding the key.</p>
+          <p><b>The job:</b> ask "what does the internet know about this org / domain / netblock?" in plain English, get a clean answer, and drill into any host — while a soft daily budget and an audit log keep one shared key from quietly draining.</p>
+          <p class="isnt"><b>What it isn't (yet):</b> an autonomous investigator. The LLM writes <em>one</em> query at a time — it doesn't chain calls or summarize results. Basic auth is the door, not an audit boundary; put it behind SSO / a reverse proxy for anything beyond the LAN.</p>
+        </div>
+      </div>
+      <div class="term">
+        <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="fname">— specs</span></div>
+        <div class="body">
+          <dl class="spec">
+            <div><dt>access</dt><dd>HTTP basic, per-user</dd></div>
+            <div><dt>attribution</dt><dd>every query → audit log</dd></div>
+            <div><dt>translation</dt><dd>Azure OpenAI</dd></div>
+            <div><dt>cost guard</dt><dd>soft daily budget</dd></div>
+            <div><dt>cache</dt><dd>SQLite, short-TTL</dd></div>
+            <div><dt>stack</dt><dd>FastAPI · Jinja</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CAPABILITY MAP -->
+  <section>
+    <p class="kicker rise"><span class="idx">02</span> / CAPABILITY MAP</p>
+    <h2 class="rise" style="animation-delay:.04s">Ten ways to <span class="accent">look</span></h2>
+    <p class="sub rise" style="animation-delay:.07s">Most of the surface is free. The two that cost real money are flagged. The two that are <em>powerful</em> ship gated.</p>
+    <div class="legend rise" style="animation-delay:.09s">
+      <span><span class="swatch" style="background:var(--green)"></span> free · 0 credits</span>
+      <span><span class="swatch" style="background:var(--amber)"></span> query credit</span>
+      <span><span class="swatch" style="background:var(--red)"></span> scan credit</span>
+    </div>
+    <div class="grid">
+      <div class="cap rise" data-n="01" style="animation-delay:.04s">
+        <h3>NL → Shodan search</h3>
+        <div class="route">POST /ask  ·  home “/”</div>
+        <p>Type plain English; the model returns an <em>editable</em> Shodan query and the result table. Rows carry InternetDB vulns/tags + a 🍯 honeypot badge.</p>
+        <div class="how"><span class="chip c-query">1 / page</span> &nbsp;<b>Try:</b> “exposed RDP on org Acme Industries”</div>
+      </div>
+      <div class="cap rise" data-n="02" style="animation-delay:.08s">
+        <h3>Host detail</h3>
+        <div class="route">GET /host/{ip}</div>
+        <p>The full Shodan record — services, banners, TLS, CVEs — plus a free InternetDB panel and a honeypot flag if the host is tagged one.</p>
+        <div class="how"><span class="chip c-query">1 credit</span> &nbsp;<b>Cached</b> ~1h · “force refresh” to re-spend</div>
+      </div>
+      <div class="cap rise" data-n="03" style="animation-delay:.12s">
+        <h3>InternetDB intel</h3>
+        <div class="route">GET /idb/{ip}</div>
+        <p>Ports, CVEs, hostnames, CPEs and tags from Shodan's keyless InternetDB — the 0-cost “what's already known” lookup behind every row.</p>
+        <div class="how"><span class="chip c-free">free</span> &nbsp;<b>No key, no credit, ever.</b></div>
+      </div>
+      <div class="cap rise" data-n="04" style="animation-delay:.16s">
+        <h3>Honeypot flag 🍯</h3>
+        <div class="route">badge on rows + host</div>
+        <p>A 🍯 badge marks likely decoys so you don't burn hours on them — driven by the <span class="inline-code">honeypot</span> tag (Shodan retired the old per-IP honeyscore).</p>
+        <div class="how"><span class="chip c-free">free</span> &nbsp;<b>Signal:</b> tag-based, via InternetDB</div>
+      </div>
+      <div class="cap rise" data-n="05" style="animation-delay:.2s">
+        <h3>Bulk DNS</h3>
+        <div class="route">GET · POST /dns</div>
+        <p>Paste a mixed blob of hostnames and IPs. It forward-resolves the names and reverse-resolves the addresses, batched ≤100.</p>
+        <div class="how"><span class="chip c-free">free</span> &nbsp;<b>Use:</b> triage a client's asset list fast</div>
+      </div>
+      <div class="cap rise" data-n="06" style="animation-delay:.24s">
+        <h3>Facet charts</h3>
+        <div class="route">strip above “/” results</div>
+        <p>Top countries, ports, orgs, products, ASNs &amp; OS for the current query — rendered as bars from the <em>free</em> count endpoint, even on cache hits.</p>
+        <div class="how"><span class="chip c-free">free</span> &nbsp;<b>Zero credits</b>, every search</div>
+      </div>
+      <div class="cap rise" data-n="07" style="animation-delay:.28s">
+        <h3>Domain recon</h3>
+        <div class="route">GET /domain?q=acme.com</div>
+        <p>Subdomains + passive-DNS records from Shodan's domain database — one of the highest-signal recon moves on a fresh engagement.</p>
+        <div class="how"><span class="chip c-query">1 credit</span> &nbsp;<b>Cached</b> 6h (passive DNS is slow-moving)</div>
+      </div>
+      <div class="cap rise" data-n="08" style="animation-delay:.32s">
+        <h3>Community library</h3>
+        <div class="route">GET /library</div>
+        <p>Browse &amp; search the queries the Shodan community has shared, then <em>Run</em> one straight into the search.</p>
+        <div class="how"><span class="chip c-free">free</span> &nbsp;<b>Starter dorks</b> without memorizing syntax</div>
+      </div>
+      <div class="cap rise" data-n="09" style="animation-delay:.36s" id="scan-card">
+        <h3>On-demand scan <span style="color:var(--red);font-size:12px;font-family:var(--mono)">⦿ GATED</span></h3>
+        <div class="route">GET · POST /scan · /scan/{id}</div>
+        <p>Ask Shodan to crawl an IP/CIDR <em>now</em>, then poll status. Authorization-gated, host-capped, and fully logged. <b>Off until you opt in.</b></p>
+        <div class="how"><span class="chip c-scan">scan credits</span> &nbsp;<b>Enable:</b> see §04 below</div>
+      </div>
+      <div class="cap rise" data-n="10" style="animation-delay:.4s">
+        <h3>Network alerts</h3>
+        <div class="route">GET · POST /alerts · …/trigger</div>
+        <p>Register IP ranges for continuous monitoring; trip on new services, expired certs, matching CVEs. A local mirror records <em>who</em> created each alert.</p>
+        <div class="how"><span class="chip c-free">free to manage</span> &nbsp;<b>On by default</b> · uses monitored-IP pool</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CREDIT LEDGER -->
+  <section>
+    <p class="kicker rise"><span class="idx">03</span> / THE LEDGER</p>
+    <h2 class="rise" style="animation-delay:.04s">What actually <span class="accent">costs money</span></h2>
+    <p class="sub rise" style="animation-delay:.07s">Two separate pools: <em>query</em> credits (search / host / domain) and <em>scan</em> credits (on-demand crawls). Everything else is free. The audit log now records the action <em>and</em> the credits spent per row.</p>
+    <div class="term rise" style="animation-delay:.1s">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="fname">— credit_ledger.tsv</span></div>
+      <div class="body" style="padding:6px 10px">
+        <table class="ledger">
+          <thead><tr><th>Operation</th><th>Route</th><th>Cost</th></tr></thead>
+          <tbody>
+            <tr><td class="op">search (per page)</td><td class="op" style="color:var(--soft)">/ask</td><td><span class="chip c-query">1 query · cached 0</span></td></tr>
+            <tr><td class="op">host detail</td><td class="op" style="color:var(--soft)">/host/{ip}</td><td><span class="chip c-query">1 query · cached 0</span></td></tr>
+            <tr><td class="op">domain recon</td><td class="op" style="color:var(--soft)">/domain</td><td><span class="chip c-query">1 query · cached 6h</span></td></tr>
+            <tr><td class="op">InternetDB</td><td class="op" style="color:var(--soft)">/idb/{ip}</td><td><span class="chip c-free">free · no key</span></td></tr>
+            <tr><td class="op">bulk DNS</td><td class="op" style="color:var(--soft)">/dns</td><td><span class="chip c-free">free</span></td></tr>
+            <tr><td class="op">facet charts</td><td class="op" style="color:var(--soft)">count()</td><td><span class="chip c-free">free</span></td></tr>
+            <tr><td class="op">community queries</td><td class="op" style="color:var(--soft)">/library</td><td><span class="chip c-free">free</span></td></tr>
+            <tr><td class="op">on-demand scan</td><td class="op" style="color:var(--soft)">/scan</td><td><span class="chip c-scan">scan credits</span></td></tr>
+            <tr><td class="op">alert management</td><td class="op" style="color:var(--soft)">/alerts</td><td><span class="chip c-free">free · uses monitored-IP pool</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- THE .ENV CENTERPIECE -->
+  <section id="gated">
+    <p class="kicker rise"><span class="idx">04</span> / ENABLING THE GATED FEATURES</p>
+    <h2 class="rise" style="animation-delay:.04s">Those three <span class="accent">.env lines</span>, decoded</h2>
+    <p class="sub rise" style="animation-delay:.07s">“Gated” = high-impact features kept off (or guarded) until you deliberately opt in. You set these as environment variables in your <span class="inline-code">.env</span> file, then restart. Here's exactly what each line does.</p>
+    <div class="envwrap rise" style="animation-delay:.1s">
+      <div class="term">
+        <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="fname">— .env</span></div>
+        <div class="body">
+<pre class="env"><span class="cm"># add these, then restart the app</span>
+<span class="k">SH_ENABLE_SCAN</span>=<span class="v">1</span><span class="tag">1</span>
+<span class="k">SH_SCAN_ALLOWLIST</span>=<span class="v">203.0.113.0/24,198.51.100.0/24</span><span class="tag">2</span>
+<span class="cm"># SH_ENABLE_ALERTS=1  ← already the default</span><span class="tag">3</span></pre>
+        </div>
+      </div>
+      <ol class="notes">
+        <li><b>The master switch for scanning.</b> It's <code>false</code> by default. Set it to <code>1</code> and <code>/scan</code> flips from a “disabled” notice into a working form — and <code>POST /scan</code> starts running instead of returning <code>403</code>.</li>
+        <li><b>Your authorized ranges.</b> A scan is <b>rejected unless every target sits inside one of these CIDRs.</b> Leave it empty and the form instead forces an explicit “I am authorized” checkbox on each scan (still logged). Cap per scan: <code>SH_SCAN_MAX_HOSTS</code> (default 4096).</li>
+        <li><b>Not active config — it's a comment.</b> The leading <code>#</code> means this line does nothing; it's a reminder that alerts are <em>already</em> on. To turn alerts <em>off</em>, set <code>SH_ENABLE_ALERTS=0</code> (uncommented).</li>
+      </ol>
+    </div>
+    <div class="warn rise" style="animation-delay:.14s">
+      <span class="ic">⚠️</span>
+      <p><b>Those example IPs are placeholders.</b> <span class="inline-code">203.0.113.0/24</span> and <span class="inline-code">198.51.100.0/24</span> are RFC 5737 <em>documentation</em> ranges (TEST-NET-3 / TEST-NET-2) — they exist precisely so they're never real targets. <b>Replace them with netblocks you actually own or are contracted to scan.</b> Pointing Shodan's crawlers at infrastructure you're not authorized for is your liability, on your key.</p>
+    </div>
+  </section>
+
+  <!-- SESSION WALKTHROUGH -->
+  <section>
+    <p class="kicker rise"><span class="idx">05</span> / A SESSION</p>
+    <h2 class="rise" style="animation-delay:.04s">Start to <span class="accent">finding</span></h2>
+    <div class="term rise" style="animation-delay:.08s">
+      <div class="bar"><span class="d r"></span><span class="d y"></span><span class="d g"></span><span class="fname">— playbook</span></div>
+      <div class="body">
+        <ol class="flow">
+          <li><h4>Sign in</h4><p>The browser prompts for HTTP basic auth. Each teammate has their own username so the log can name them.</p></li>
+          <li><h4>Ask in English</h4><p class="q">“Find exposed RDP on hosts owned by org Acme Industries”</p><p>Azure OpenAI returns <span class="inline-code">org:"Acme Industries" port:3389</span> — editable, so you refine without retyping.</p></li>
+          <li><h4>Read the room</h4><p>Results land with free InternetDB enrichment, 🍯 honeypot badges on decoys, and a facet strip (top ports / countries / orgs) above the table — all at 0 extra credit.</p></li>
+          <li><h4>Drill in</h4><p>Click any IP for the full host record at <span class="inline-code">/host/{ip}</span>; pivot to <span class="inline-code">/domain</span> for subdomains or <span class="inline-code">/dns</span> for a bulk resolve.</p></li>
+          <li><h4>Watch it over time</h4><p>Register the client's netblocks under <span class="inline-code">/alerts</span> so changes trip a trigger — or, once enabled, kick a fresh <span class="inline-code">/scan</span> of a range you're cleared for.</p></li>
+          <li><h4>Leave a trail</h4><p>Prompt, generated query, result count, your name, the action and the credits spent all append to <span class="inline-code">/log</span>.</p></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- SAFETY -->
+  <section>
+    <p class="kicker rise"><span class="idx">06</span> / GUARDRAILS</p>
+    <h2 class="rise" style="animation-delay:.04s">Built to not <span class="accent">surprise you</span></h2>
+    <div class="guards rise" style="animation-delay:.08s">
+      <div class="guard"><h4><span class="g-ic">▣</span>Per-user auth</h4><p>Every request is attributed; the log shows who ran what.</p></div>
+      <div class="guard"><h4><span class="g-ic">▣</span>Soft daily budget</h4><p><span class="inline-code">SH_DAILY_BUDGET</span> caps team query credits per UTC day.</p></div>
+      <div class="guard"><h4><span class="g-ic">▣</span>Scan authorization</h4><p>Allowlist or explicit confirm, host-capped, off by default.</p></div>
+      <div class="guard"><h4><span class="g-ic">▣</span>Free-first design</h4><p>InternetDB + count + DNS run before you ever spend a credit.</p></div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <p class="kicker rise"><span class="idx">07</span> / RUN IT</p>
+    <div class="runcmd rise" style="animation-delay:.05s"><span class="p">$</span> .venv/bin/python run.py <span style="color:var(--muted)"># → http://localhost:8000</span></div>
+    <p class="foot-note rise" style="animation-delay:.1s">shodan-hunter v0.3.0 · internal team tool · 90 tests green · see README.md &amp; FEATURES.md · your Shodan key, your liability.</p>
+  </footer>
+
+</div>
+</body>
+</html>

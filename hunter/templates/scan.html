@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}On-demand scan · shodan-hunter{% endblock %}
+{% block content %}
+
+<h1>On-demand scan</h1>
+
+<div class="banner warn">Scanning points Shodan's crawlers at the target and spends <strong>scan</strong> credits (separate from query credits). Only scan ranges you are authorized to scan. Every submission is logged to the team audit log.</div>
+
+{% if not enabled %}
+  <div class="banner bad">On-demand scanning is disabled. Set <code>SH_ENABLE_SCAN=1</code> in .env and restart to enable.</div>
+{% endif %}
+
+{% if enabled %}
+  {% if error %}
+    <div class="banner bad">{{ error }}</div>
+  {% endif %}
+
+  {% if submitted %}
+    <div class="card">
+      <h2>Scan submitted ✓</h2>
+      <dl class="kv">
+        <dt>Scan ID</dt>
+        <dd><a href="/scan/{{ submitted.scan_id }}"><code>{{ submitted.scan_id }}</code></a></dd>
+        <dt>Hosts</dt>
+        <dd>{{ submitted.result.count }}</dd>
+        <dt>Scan credits left</dt>
+        <dd>{{ submitted.result.credits_left }}</dd>
+        <dt>Authorization</dt>
+        <dd><span class="muted">{{ submitted.authorization }}</span></dd>
+      </dl>
+      <p class="muted">Poll the Scan ID link for status.</p>
+    </div>
+  {% endif %}
+
+  <div class="card">
+    <form method="post" action="/scan">
+      <div class="field">
+        <label>IPs / CIDRs to scan</label>
+        <textarea class="blob" name="targets" rows="3" placeholder="203.0.113.0/24, 198.51.100.10"></textarea>
+      </div>
+      {% if allowlist %}
+        <p class="muted">Authorized ranges (SH_SCAN_ALLOWLIST):</p>
+        {% for a in allowlist %}<span class="chip good">{{ a }}</span> {% endfor %}
+        <p class="muted">Targets must fall within these ranges.</p>
+      {% else %}
+        <div class="checks">
+          <label><input type="checkbox" name="confirm" value="1" required> I confirm I am authorized to scan these targets.</label>
+        </div>
+      {% endif %}
+      <button>Submit scan</button>
+    </form>
+  </div>
+{% endif %}
+
+{% if status_detail %}
+  <div class="card">
+    <h2>Scan {{ status_detail.status.id }}</h2>
+    <span class="chip">{{ status_detail.status.status }}</span>
+    <dl class="kv">
+      <dt>Hosts</dt>
+      <dd>{{ status_detail.status.count }}</dd>
+      <dt>Created</dt>
+      <dd>{{ status_detail.status.created }}</dd>
+      {% if status_detail.row %}
+        <dt>Targets</dt>
+        <dd><code>{{ status_detail.row.targets }}</code></dd>
+        <dt>Submitted by</dt>
+        <dd>{{ status_detail.row.submitted_by }}</dd>
+        <dt>When</dt>
+        <dd>{{ status_detail.row.submitted_ts | epoch_local }}</dd>
+      {% endif %}
+    </dl>
+    <p class="muted"><a href="/scan/{{ status_detail.status.id }}">↻ refresh status</a></p>
+  </div>
+{% endif %}
+
+{% if recent %}
+  <h2>Recent scans</h2>
+  <table class="lined">
+    <thead>
+      <tr>
+        <th>Scan ID</th>
+        <th>Targets</th>
+        <th>Hosts</th>
+        <th>Status</th>
+        <th>By</th>
+        <th>When</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in recent %}
+        <tr>
+          <td><a href="/scan/{{ r.scan_id }}"><code>{{ r.scan_id }}</code></a></td>
+          <td><code>{{ r.targets }}</code></td>
+          <td>{{ r.host_count }}</td>
+          <td><span class="chip">{{ r.status }}</span></td>
+          <td>{{ r.submitted_by }}</td>
+          <td>{{ r.submitted_ts | epoch_local }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% elif enabled and not submitted and not status_detail %}
+  <p class="empty">No scans submitted yet.</p>
+{% endif %}
+
+{% endblock %}
