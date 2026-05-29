@@ -10,8 +10,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+import ipaddress
+
 from . import config, db, internetdb, llm, monitor, recon, scans, shodan_api
-from .auth import current_user
+from .auth import current_user, require_same_origin
 from .db import BudgetExceeded
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -30,6 +32,20 @@ def _epoch_local(ts) -> str:
 
 
 templates.env.filters["epoch_local"] = _epoch_local
+
+
+def _valid_ip(ip: str) -> str:
+    """Validate an IP path param. Returns the trimmed IP, or 422s.
+
+    Guards the routes that fan a path param straight out to InternetDB/Shodan
+    (``/idb/{ip}``, ``/host/{ip}``, ``/api/honeyscore/{ip}``) so an authed user
+    can't drive arbitrary strings at the upstream endpoints."""
+    ip = (ip or "").strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise HTTPException(422, f"Not a valid IP address: {ip!r}")
+    return ip
 
 app = FastAPI(title="shodan-hunter", version="0.3.0")
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
@@ -116,7 +132,7 @@ async def home(request: Request, user: str = Depends(current_user)):
     )
 
 
-@app.post("/ask", response_class=HTMLResponse)
+@app.post("/ask", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
 async def ask(
     request: Request,
     user: str = Depends(current_user),
@@ -198,6 +214,7 @@ async def ask(
 @app.get("/host/{ip}", response_class=HTMLResponse)
 async def host_page(request: Request, ip: str, user: str = Depends(current_user),
                     refresh: bool = False):
+    ip = _valid_ip(ip)
     data = shodan_api.host(ip, use_cache=not refresh)
     # Free side-channel context: InternetDB costs no query credits.
     try:
@@ -270,7 +287,7 @@ async def dns_form(request: Request, user: str = Depends(current_user)):
     )
 
 
-@app.post("/dns", response_class=HTMLResponse)
+@app.post("/dns", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
 async def dns_run(request: Request, user: str = Depends(current_user),
                   blob: str = Form("")):
     result = recon.bulk_dns(blob)
@@ -301,14 +318,15 @@ async def scan_form(request: Request, user: str = Depends(current_user)):
     )
 
 
-@app.post("/scan", response_class=HTMLResponse)
+@app.post("/scan", response_class=HTMLResponse, dependencies=[Depends(require_same_origin)])
 async def scan_submit(request: Request, user: str = Depends(current_user),
                       targets: str = Form(""), confirm: str = Form("")):
     if not config.SCAN_ENABLED:
         raise HTTPException(403, "On-demand scanning is disabled (set SH_ENABLE_SCAN=1).")
     submitted = error = None
     try:
-        submitted = scans.submit(targets, user=user, user_confirmed=bool(confirm))
+        submitted = scans.submit(targets, user=user,
+                                 user_confirmed=config.truthy(confirm))
         db.log_audit(username=user, prompt=f"scan {targets}", query=None,
                      rationale=submitted.get("authorization"),
                      result_total=recon.count_hosts(submitted["targets"]),
@@ -361,7 +379,7 @@ async def alerts_page(request: Request, user: str = Depends(current_user)):
                                       _alerts_ctx(request, user))
 
 
-@app.post("/alerts")
+@app.post("/alerts", dependencies=[Depends(require_same_origin)])
 async def alerts_create(request: Request, user: str = Depends(current_user),
                         name: str = Form(...), ips: str = Form(...),
                         triggers: list[str] = Form([])):
@@ -380,7 +398,7 @@ async def alerts_create(request: Request, user: str = Depends(current_user),
     return RedirectResponse("/alerts", status_code=303)
 
 
-@app.post("/alerts/{aid}/delete")
+@app.post("/alerts/{aid}/delete", dependencies=[Depends(require_same_origin)])
 async def alerts_delete(aid: str, user: str = Depends(current_user)):
     if not config.ALERTS_ENABLED:
         raise HTTPException(403, "Alerts are disabled.")
@@ -396,13 +414,13 @@ async def alerts_delete(aid: str, user: str = Depends(current_user)):
     return RedirectResponse("/alerts", status_code=303)
 
 
-@app.post("/alerts/{aid}/trigger")
+@app.post("/alerts/{aid}/trigger", dependencies=[Depends(require_same_origin)])
 async def alerts_trigger(aid: str, user: str = Depends(current_user),
                          trigger: str = Form(...), enabled: str = Form("")):
     if not config.ALERTS_ENABLED:
         raise HTTPException(403, "Alerts are disabled.")
     try:
-        monitor.set_trigger(aid, trigger, bool(enabled))
+        monitor.set_trigger(aid, trigger, config.truthy(enabled))
     except shodan_api.ShodanError:
         pass
     return RedirectResponse("/alerts", status_code=303)
@@ -449,15 +467,20 @@ async def api_info(user: str = Depends(current_user)):
 @app.get("/idb/{ip}")
 async def idb_json(ip: str, user: str = Depends(current_user)):
     """Free InternetDB lookup — what Shodan already knows about an IP, 0 credits."""
+    ip = _valid_ip(ip)
     return {"ip": ip, **internetdb.lookup(ip)}
 
 
 @app.get("/api/honeyscore/{ip}")
 async def honeyscore_json(ip: str, user: str = Depends(current_user)):
     """Free honeypot probability (0.0–1.0) for an IP, 0 credits."""
+    ip = _valid_ip(ip)
     return {"ip": ip, "honeyscore": shodan_api.honeyscore(ip)}
 
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True, **config.status()}
+    # Intentionally minimal: this endpoint is unauthenticated, so it must not
+    # disclose config (bind address, budget, enabled features, user count).
+    # The full picture is available to authed callers via /api/info.
+    return {"ok": True}

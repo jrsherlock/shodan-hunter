@@ -24,7 +24,8 @@ def test_healthz_no_auth(api_info_stub):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert "scan_enabled" in body  # comes from config.status()
+    # Unauthenticated endpoint must not leak config (bind, budget, features…).
+    assert body == {"ok": True}
 
 
 # ── home ─────────────────────────────────────────────────────────────────────

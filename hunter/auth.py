@@ -1,10 +1,15 @@
-"""HTTP basic auth gate. Constant-time comparison; per-user credentials."""
+"""HTTP basic auth gate. Constant-time comparison; per-user credentials.
+
+Also provides :func:`require_same_origin`, a CSRF guard for state-changing
+requests — see its docstring for the threat model.
+"""
 
 from __future__ import annotations
 
 import secrets
+from urllib.parse import urlsplit
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from . import config
@@ -36,3 +41,28 @@ def current_user(creds: HTTPBasicCredentials = Depends(security)) -> str:
             headers={"WWW-Authenticate": 'Basic realm="shodan-hunter"'},
         )
     return creds.username
+
+
+def require_same_origin(request: Request) -> None:
+    """CSRF guard for state-changing (POST) routes.
+
+    We authenticate with HTTP Basic and hold no session cookie, so the browser
+    re-attaches the cached credentials to *any* request to this origin —
+    including a cross-site form POST from a page the victim is tricked into
+    visiting. A browser cannot forge or suppress the ``Origin`` header on such
+    a request, so if ``Origin`` (falling back to ``Referer``) is present and
+    its host doesn't match ours, we reject.
+
+    Requests with neither header (curl, server-to-server) carry no ambient
+    browser credentials, so they pose no CSRF risk and are allowed through —
+    auth still applies to them via :func:`current_user`.
+    """
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        return
+    host = request.headers.get("host")
+    if not host or urlsplit(source).netloc != host:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Cross-origin request blocked (CSRF protection).",
+        )

@@ -30,11 +30,25 @@ def _float(name: str, default: float) -> float:
         return default
 
 
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def truthy(raw: str | None) -> bool:
+    """Canonical truthy check for user/form-supplied strings.
+
+    Use this — never ``bool(s)`` — to interpret a form field as a flag: a
+    non-empty string like ``"false"``/``"0"``/``"off"`` is truthy under
+    ``bool()``, which would wrongly authorize e.g. a scan submitted with
+    ``confirm=false``.
+    """
+    return (raw or "").strip().lower() in _TRUTHY
+
+
 def _bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "").strip().lower()
+    raw = os.environ.get(name, "").strip()
     if not raw:
         return default
-    return raw in ("1", "true", "yes", "on")
+    return truthy(raw)
 
 
 def _csv(name: str) -> list[str]:
