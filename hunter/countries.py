@@ -328,3 +328,46 @@ def resolve(value: str) -> str | None:
     if norm.startswith("the "):
         norm = norm[4:]
     return NAME_TO_CODE.get(norm)
+
+
+# US state/territory name → ISO 3166-2 region code (without the "US-" prefix).
+#
+# Shodan keys US states via the ``region:`` filter using this 2-letter code —
+# NOT the full name ("region:Illinois" matches zero hosts; "region:IL" matches
+# thousands). Empirically verified against Shodan's free count endpoint. Because
+# region codes collide across countries (WA = Washington *and* Western
+# Australia), a region rewrite must always be scoped with ``country:US``.
+US_STATE_TO_CODE: dict[str, str] = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
+    # Federal district + territories.
+    "district of columbia": "DC", "washington dc": "DC", "washington d.c.": "DC",
+    "puerto rico": "PR", "guam": "GU", "us virgin islands": "VI",
+    "u.s. virgin islands": "VI", "american samoa": "AS",
+    "northern mariana islands": "MP",
+}
+
+
+def resolve_us_state(value: str) -> str | None:
+    """Return the 2-letter region code for a US state/territory *name*, else None.
+
+    Name-only by design: a bare 2-letter code (already valid for ``region:``) is
+    left for the caller to keep as-is. Normalises case, diacritics, internal
+    whitespace, and a leading "the"."""
+    decomposed = unicodedata.normalize("NFKD", value)
+    ascii_value = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    norm = re.sub(r"\s+", " ", ascii_value.strip().lower())
+    if norm.startswith("the "):
+        norm = norm[4:]
+    return US_STATE_TO_CODE.get(norm)

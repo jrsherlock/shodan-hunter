@@ -3,6 +3,7 @@ placeholder stand-ins like YOUR_COUNTRY_CODE."""
 
 from __future__ import annotations
 
+from hunter import countries
 from hunter.llm import _sanitize_query
 
 
@@ -80,3 +81,62 @@ def test_real_value_with_your_substring_kept():
     clean, warns = _sanitize_query('product:"YourKit"')
     assert clean == 'product:"YourKit"'
     assert warns == []
+
+
+# ── US state handling (the city:"Illinois" → region:IL bug) ──────────────────
+
+
+def test_state_in_city_filter_becomes_region_with_country():
+    # The exact failure observed in the UI: state stuffed into city:.
+    clean, warns = _sanitize_query('device:webcam city:"Illinois"')
+    assert clean == 'country:US device:webcam region:IL'
+    assert any("region:IL" in w for w in warns)
+    assert any("country:US" in w for w in warns)
+
+
+def test_state_full_name_in_region_filter_becomes_code():
+    clean, warns = _sanitize_query('region:"California" product:"Apache httpd"')
+    assert "region:CA" in clean
+    assert "region:California" not in clean
+    assert "country:US" in clean
+
+
+def test_state_unquoted_name_mapped():
+    clean, _ = _sanitize_query("device:webcam state:Texas")
+    assert "region:TX" in clean
+    assert "country:US" in clean
+
+
+def test_existing_country_not_duplicated():
+    clean, _ = _sanitize_query('country:US device:webcam city:"Illinois"')
+    assert clean.count("country:US") == 1
+    assert "region:IL" in clean
+
+
+def test_valid_region_code_untouched():
+    # An explicit code is already correct — don't rewrite or add country.
+    clean, warns = _sanitize_query("device:webcam region:IL")
+    assert clean == "device:webcam region:IL"
+    assert warns == []
+
+
+def test_real_city_not_touched():
+    clean, warns = _sanitize_query('device:webcam city:"Chicago"')
+    assert clean == 'device:webcam city:"Chicago"'
+    assert warns == []
+
+
+def test_ambiguous_city_state_warned_not_rewritten():
+    # "New York" in city: is a legit NYC search — warn, but leave it alone.
+    clean, warns = _sanitize_query('city:"New York" port:80')
+    assert 'city:"New York"' in clean
+    assert "region:" not in clean
+    assert warns and "region:NY" in warns[0]
+
+
+def test_resolve_us_state_direct():
+    assert countries.resolve_us_state("Illinois") == "IL"
+    assert countries.resolve_us_state("  new york ") == "NY"
+    assert countries.resolve_us_state("the district of columbia") == "DC"
+    assert countries.resolve_us_state("IL") is None      # codes are not names
+    assert countries.resolve_us_state("Atlantis") is None

@@ -50,16 +50,72 @@ def _fix_country_names(query: str) -> tuple[str, list[str]]:
     return _COUNTRY_FILTER_RE.sub(_sub, query), warnings
 
 
+_GEO_FILTER_RE = re.compile(
+    r'(?P<sign>-?)(?P<field>city|region|state):(?:"(?P<q>[^"]+)"|(?P<u>[^\s"]+))', re.I
+)
+# US states that are also plausible as a literal ``city:`` value — for these we
+# warn rather than rewrite, so we don't silently broaden an intentional
+# city search (e.g. ``city:"New York"`` for NYC) into a whole-state one.
+_AMBIGUOUS_CITY_STATES = {"new york", "washington"}
+
+
+def _fix_us_states(query: str) -> tuple[str, list[str]]:
+    """Rewrite a US *state* expressed as a name or in the wrong filter into the
+    ``region:<CODE>`` form Shodan actually matches, scoped with ``country:US``.
+
+    The model routinely stuffs a state into ``city:`` (``city:"Illinois"`` → 0
+    hits) or uses the full name (``region:"Illinois"`` → 0 hits). Shodan keys US
+    states by the 2-letter region code (``region:IL``), and that code isn't
+    US-unique (``region:WA`` also matches Western Australia), so we add
+    ``country:US`` when no country filter is present.
+    """
+    warnings: list[str] = []
+    has_country = bool(re.search(r"(^|\s)-?country:", query, re.I))
+    rewrote = False
+
+    def _sub(m: re.Match[str]) -> str:
+        nonlocal rewrote
+        value = m.group("q") if m.group("q") is not None else m.group("u")
+        code = countries.resolve_us_state(value)
+        if code is None:
+            return m.group(0)  # a real city, an existing code, or unknown — leave it
+        field = m.group("field").lower()
+        if field == "city" and value.strip().lower() in _AMBIGUOUS_CITY_STATES:
+            warnings.append(
+                f"“city:{value}” reads as a US state, not a city — if you meant "
+                f"the state, use country:US region:{code}."
+            )
+            return m.group(0)
+        rewrote = True
+        warnings.append(
+            f"Mapped {field} “{value}” → region:{code} (Shodan keys US states by "
+            "their 2-letter region code, not the name)."
+        )
+        return f"{m.group('sign')}region:{code}"
+
+    new_query = _GEO_FILTER_RE.sub(_sub, query)
+    if rewrote and not has_country:
+        new_query = f"country:US {new_query}"
+        warnings.append(
+            "Added country:US to scope the region code (codes like WA/CA are not "
+            "unique to the US)."
+        )
+    return new_query, warnings
+
+
 def _sanitize_query(query: str) -> tuple[str, list[str]]:
     """Normalise/drop the query defects we've actually observed from the model:
     full-name ``country:`` values (mapped to their ISO code when we recognise
-    them, else dropped), and literal placeholder stand-ins.
+    them, else dropped), US states given as names or in the wrong filter (mapped
+    to ``country:US region:<CODE>``), and literal placeholder stand-ins.
 
     Returns (clean_query, warnings). Quoted multi-word values survive because
-    the country pass rewrites them in place and the token loop only ever drops
+    the geo passes rewrite them in place and the token loop only ever drops
     whole tokens, rejoining with single spaces.
     """
     query, warnings = _fix_country_names(query)
+    query, state_warnings = _fix_us_states(query)
+    warnings += state_warnings
     kept: list[str] = []
     for tok in query.split():
         low = tok.lower()
@@ -132,7 +188,8 @@ Shodan query syntax cheatsheet:
     ip:203.0.113.5                 # single IP (rarely useful in search; use host page)
     port:3389                      # exposed TCP/UDP port
     country:US                     # 2-letter ISO code ONLY (US, GB, DE, CA, FR, JP) — never "USA"/"UK"/a full name
-    city:"Des Moines"
+    city:"Des Moines"              # a CITY name only — never a state/province
+    region:IL                      # US state/province by 2-letter region code (IL, CA, TX, NY); pair with country:US
     product:"Apache httpd"
     version:"2.4.49"
     os:"Windows 10"
@@ -164,6 +221,11 @@ Guidance:
   and add a warning explaining what you assumed.
 - country: takes a 2-letter ISO 3166-1 code (US, GB, DE, CA, FR, JP) — NEVER
   "USA", "UK", or a full country name; those match zero hosts.
+- For a US STATE (Illinois, California, New York…) use region: with the
+  2-letter state code AND country:US — e.g. "in Illinois" → country:US region:IL.
+  NEVER put a state in city: and NEVER use the full state name (city:"Illinois"
+  and region:"Illinois" both match zero hosts). city: is for actual cities
+  (city:"Chicago").
 - If the user says "our/my/your company/org/country/network" WITHOUT naming it,
   you do not know the value. OMIT that filter entirely and add a warning asking
   them to name it. NEVER emit a placeholder like YOUR_COUNTRY_CODE, <org>,
