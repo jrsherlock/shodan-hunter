@@ -48,6 +48,23 @@
   </div>
 </section>
 
+{% if pivots %}
+<section class="card pivots">
+  <h2>Next steps <span class="muted">· pivot from this host</span></h2>
+  <p class="muted small">One click runs the query as a new search (no LLM, 1 credit). Hover any chip for what it does.</p>
+  <form method="post" action="/ask">
+    <input type="hidden" name="prompt" value="pivot from {{ ip }}">
+    <input type="hidden" name="page" value="1">
+    <div class="pivot-list">
+      {% for p in pivots %}
+        <button type="submit" name="override_query" value="{{ p.query }}"
+                class="chip pivot" title="{{ p.why }} — runs: {{ p.query }}">{{ p.label }}</button>
+      {% endfor %}
+    </div>
+  </form>
+</section>
+{% endif %}
+
 {% if idb %}
 <section class="card">
   <h2>Free intel <span class="chip good">InternetDB · 0 credits</span></h2>
@@ -96,6 +113,19 @@
         {% if svc.http %}<span class="chip">HTTP {{ svc.http.status or '' }}</span>{% endif %}
         {% if svc.vulns %}<span class="chip bad">{{ (svc.vulns or {})|length }} CVE</span>{% endif %}
       </summary>
+      {% set url = service_url(ip, svc) %}
+      {% if url or probe_enabled %}
+        <p class="svc-actions">
+          {% if url %}
+            <a class="chip" href="{{ url }}" target="_blank" rel="noopener noreferrer"
+               title="Open this service in a new tab — your browser connects, not the tool">↗ open {{ url }}</a>
+          {% endif %}
+          {% if probe_enabled %}
+            <button type="button" class="chip probe-btn" data-ip="{{ ip }}" data-port="{{ svc.port }}"
+                    title="Server-side TCP connect — is it responding right now?">probe :{{ svc.port }}</button><span class="probe-result muted small"></span>
+          {% endif %}
+        </p>
+      {% endif %}
       {% if svc.http and svc.http.title %}<p><strong>Title:</strong> {{ svc.http.title }}</p>{% endif %}
       {% if svc.http and svc.http.server %}<p><strong>Server:</strong> <code>{{ svc.http.server }}</code></p>{% endif %}
       {% if svc.ssl and svc.ssl.cert %}
@@ -113,4 +143,34 @@
   <details><summary>show</summary><pre class="json">{{ host | tojson(indent=2) }}</pre></details>
 </section>
 
+{% endblock %}
+
+{% block scripts %}
+{% if probe_enabled %}
+<script>
+// Liveness probe: POST /probe (same-origin, so the CSRF Origin check passes)
+// and render the verdict inline. No server values are interpolated into this
+// script — ip/port come from data-* attributes, status text from the response.
+document.addEventListener("click", function (e) {
+  var btn = e.target.closest(".probe-btn");
+  if (!btn) return;
+  var out = btn.nextElementSibling;
+  btn.disabled = true;
+  out.textContent = " probing…";
+  fetch("/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ ip: btn.dataset.ip, port: btn.dataset.port }),
+  })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      btn.disabled = false;
+      if (!res.ok) { out.textContent = " ✖ " + (res.j.detail || res.j.error || "error"); return; }
+      var icon = { up: "✅", down: "⛔", timeout: "⌛", error: "⚠️" }[res.j.status] || "•";
+      out.textContent = " " + icon + " " + res.j.status + (res.j.detail ? " — " + res.j.detail : "");
+    })
+    .catch(function () { btn.disabled = false; out.textContent = " ⚠️ request failed"; });
+});
+</script>
+{% endif %}
 {% endblock %}

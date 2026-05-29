@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 import ipaddress
 
-from . import config, db, internetdb, llm, monitor, recon, scans, shodan_api
+from . import config, db, internetdb, llm, monitor, pivots, probe, recon, scans, shodan_api
 from .auth import current_user, require_same_origin
 from .db import BudgetExceeded
 
@@ -32,6 +32,7 @@ def _epoch_local(ts) -> str:
 
 
 templates.env.filters["epoch_local"] = _epoch_local
+templates.env.globals["service_url"] = pivots.service_url
 
 
 def _valid_ip(ip: str) -> str:
@@ -231,7 +232,9 @@ async def host_page(request: Request, ip: str, user: str = Depends(current_user)
     return templates.TemplateResponse(
         request, "host.html",
         _ctx(request, user, ip=ip, host=data, idb=idb,
-             is_honeypot=recon.honeypot_from_tags(host_tags)),
+             is_honeypot=recon.honeypot_from_tags(host_tags),
+             pivots=pivots.host_pivots(data, idb),
+             probe_enabled=config.PROBE_ENABLED),
     )
 
 
@@ -476,6 +479,29 @@ async def honeyscore_json(ip: str, user: str = Depends(current_user)):
     """Free honeypot probability (0.0–1.0) for an IP, 0 credits."""
     ip = _valid_ip(ip)
     return {"ip": ip, "honeyscore": shodan_api.honeyscore(ip)}
+
+
+@app.post("/probe", dependencies=[Depends(require_same_origin)])
+async def probe_run(request: Request, user: str = Depends(current_user),
+                    ip: str = Form(...), port: int = Form(...)):
+    """Liveness TCP-connect to ip:port. Gated by SH_ENABLE_PROBE, audit-logged.
+    Returns {status, ms, detail} as JSON for the host page's inline probe UI."""
+    if not config.PROBE_ENABLED:
+        raise HTTPException(403, "Probing is disabled (set SH_ENABLE_PROBE=1).")
+    ip = _valid_ip(ip)
+    try:
+        result = probe.probe(ip, port)
+    except probe.ProbeNotAllowed as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    db.log_audit(
+        username=user, prompt=f"probe {ip}:{port}", query=None,
+        rationale=result["detail"], result_total=None,
+        error=None if result["status"] == "up" else result["status"],
+        action="probe", credits=0,
+    )
+    return result
 
 
 @app.get("/healthz")

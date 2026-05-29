@@ -122,6 +122,29 @@ button.chip.example {
 }
 button.chip.example:hover { background: var(--bg-elev); color: var(--accent); border-color: var(--accent); }
 
+/* Pivot chips: clickable Shodan-query suggestions on the host page. */
+.pivot-list { display: flex; flex-wrap: wrap; gap: 0.4em; margin-top: 0.6em; }
+button.chip.pivot {
+  cursor: pointer;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  font-family: inherit;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.chip.pivot:hover { background: var(--bg-elev); color: var(--accent); border-color: var(--accent); }
+
+/* Per-service liveness actions (browser link + server-side probe). */
+.svc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em; margin: 0.3em 0 0.6em; }
+a.chip { text-decoration: none; cursor: pointer; }
+a.chip:hover { color: var(--accent); border-color: var(--accent); }
+button.chip.probe-btn { cursor: pointer; font-family: inherit; color: var(--fg); }
+button.chip.probe-btn:hover { color: var(--accent); border-color: var(--accent); }
+button.chip.probe-btn:disabled { opacity: 0.6; cursor: progress; }
+.probe-result { font-family: var(--mono); }
+
 .translated .rerun-form { display: flex; gap: 0.6em; align-items: center; margin: 0.4em 0; }
 .translated .rationale { margin: 0.4em 0 0; }
 

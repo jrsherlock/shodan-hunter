@@ -118,6 +118,15 @@ SCAN_ALLOWLIST = _csv("SH_SCAN_ALLOWLIST")
 # Hard ceiling on host count per scan submission, regardless of allowlist.
 SCAN_MAX_HOSTS = _int("SH_SCAN_MAX_HOSTS", 4096)
 
+# ── Liveness probe (opens an outbound socket to the target) ─────────────────
+# Off by default: this is the only feature that connects out to an
+# operator-chosen host. When enabled, private/loopback/reserved targets are
+# still refused unless PROBE_ALLOW_PRIVATE is also set (prevents using it as an
+# internal port scanner). Every probe is audit-logged.
+PROBE_ENABLED = _bool("SH_ENABLE_PROBE", False)
+PROBE_ALLOW_PRIVATE = _bool("SH_PROBE_ALLOW_PRIVATE", False)
+PROBE_TIMEOUT = _float("SH_PROBE_TIMEOUT", 3.0)
+
 # ── Network alerts / monitoring ─────────────────────────────────────────────
 # Registering alerts consumes your plan's monitored-IP pool. Management actions
 # (create/list/delete) cost no query credits.
@@ -135,4 +144,5 @@ def status() -> dict:
         "scan_enabled": SCAN_ENABLED,
         "scan_allowlisted": len(SCAN_ALLOWLIST),
         "alerts_enabled": ALERTS_ENABLED,
+        "probe_enabled": PROBE_ENABLED,
     }

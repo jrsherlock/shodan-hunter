@@ -64,7 +64,8 @@ consumed.
 |--------|------|-------------|
 | `GET` | `/` | Search home (NL→Shodan, facet strip) |
 | `POST` | `/ask` | Run a search (LLM or override query) |
-| `GET` | `/host/{ip}` | Host detail (InternetDB enriched + honeypot tag) |
+| `GET` | `/host/{ip}` | Host detail (InternetDB enriched + honeypot tag, pivot suggestions, liveness) |
+| `POST` | `/probe` | Liveness TCP-connect to ip:port (requires `SH_ENABLE_PROBE=1`) |
 | `GET` | `/log` | Audit log |
 | `GET` | `/domain` | Domain recon form (`?q=acme.com`) |
 | `GET` | `/domain/{name}` | Domain recon for a specific name |
@@ -112,6 +113,22 @@ All via `.env`. See `.env.example` for every option. The important ones:
 | `SH_ENABLE_SCAN` | `false` | Enable the `/scan` on-demand scanning UI. **Off by default** — scanning uses scan credits and must only target ranges you are authorized to scan. |
 | `SH_SCAN_ALLOWLIST` | *(empty)* | Comma-separated CIDRs/IPs authorized for scanning. When set, scan requests are rejected unless every target falls inside the allowlist. When empty, the UI requires an explicit per-request "I am authorized" confirmation (still logged). |
 | `SH_SCAN_MAX_HOSTS` | `4096` | Hard ceiling on the number of hosts per scan submission, regardless of allowlist. |
+| `SH_ENABLE_PROBE` | `false` | Enable the host-page liveness probe (server-side TCP connect to a service). **Off by default** — it's the only feature that opens an outbound socket to a target. Browser-side "open https://ip:port" links are always shown and need no flag. |
+| `SH_PROBE_ALLOW_PRIVATE` | `false` | Allow probing private/loopback/reserved addresses. Off by default so the probe can't be used as an internal port scanner. |
+| `SH_PROBE_TIMEOUT` | `3` | Per-probe TCP connect timeout, in seconds. |
+
+### Host-page next steps (pivots + liveness)
+
+The host detail page surfaces two kinds of follow-up:
+
+- **Pivot queries** — one-click Shodan searches derived from the host's own
+  attributes (org, ASN, /24, product+version, TLS cert CN, favicon hash, CVE).
+  Each runs as an `override_query` against `/ask` (no LLM). The "find the rest
+  of the fleet" move.
+- **Liveness** — every web service gets a browser-side `open https://ip:port`
+  link (your browser connects, not the tool). With `SH_ENABLE_PROBE=1`, each
+  service also gets a **probe** button that does a server-side TCP connect and
+  reports up / down / timeout inline; every probe is audit-logged.
 
 ## What a session looks like
 
