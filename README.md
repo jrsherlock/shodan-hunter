@@ -1,5 +1,7 @@
 # shodan-hunter
 
+[![Repo](https://img.shields.io/badge/GitHub-jrsherlock%2Fshodan--hunter-181717?logo=github)](https://github.com/jrsherlock/shodan-hunter)
+
 A friendly team UI in front of Shodan. Teammates type plain English; an
 Azure OpenAI deployment translates the prompt into Shodan query syntax;
 the app runs the search and renders the results. Click any IP for a host
