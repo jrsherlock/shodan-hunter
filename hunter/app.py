@@ -129,7 +129,7 @@ async def home(request: Request, user: str = Depends(current_user)):
     return templates.TemplateResponse(
         request, "chat.html",
         _ctx(request, user, prompt="", llm_result=None, search=None, override_query=None,
-             recent=db.recent_audit(limit=10, username=user)),
+             recent=db.recent_audit(limit=5, username=user)),
     )
 
 
@@ -208,7 +208,7 @@ async def ask(
         _ctx(request, user, prompt=prompt, llm_result=llm_result,
              search=search_result, page=page, facets=facet_groups,
              override_query=override,
-             recent=db.recent_audit(limit=10, username=user)),
+             recent=db.recent_audit(limit=5, username=user)),
     )
 
 
@@ -434,18 +434,28 @@ async def alerts_trigger(aid: str, user: str = Depends(current_user),
 
 @app.get("/library", response_class=HTMLResponse)
 async def library_page(request: Request, user: str = Depends(current_user),
-                       q: str = Query(""), page: int = Query(1)):
+                       q: str = Query(""), page: int = Query(1),
+                       sort: str = Query("votes")):
     q = (q or "").strip()
+    # "votes" → Top Voted, "timestamp" → Recently Added (directory listing only)
+    sort = sort if sort in ("votes", "timestamp") else "votes"
     library_error = None
     items: list = []
+    tags: list = []
+    # Popular tags are the Explore "categories"; decorative, so never fatal.
     try:
-        data = shodan_api.query_search(q, page=page) if q else shodan_api.community_queries(page=page)
+        tags = (shodan_api.community_tags().get("matches")) or []
+    except shodan_api.ShodanError:
+        tags = []
+    try:
+        data = shodan_api.query_search(q, page=page) if q else shodan_api.community_queries(page=page, sort=sort)
         items = (data.get("matches") if isinstance(data, dict) else data) or []
     except shodan_api.ShodanError as e:
         library_error = str(e)
     return templates.TemplateResponse(
         request, "library.html",
-        _ctx(request, user, q=q, page=page, items=items, library_error=library_error),
+        _ctx(request, user, q=q, page=page, sort=sort, items=items, tags=tags,
+             library_error=library_error),
     )
 
 
