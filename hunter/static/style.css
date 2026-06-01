@@ -298,3 +298,105 @@ button.danger:hover { filter: brightness(1.2); }
 
 /* generic definition rows reused on /scan + /alerts detail */
 dl.kv dd code { word-break: break-all; }
+
+/* ── SOC console: summary strip, host cards, severity + tag chips ─────────── */
+
+.flag { font-size: 1.15em; line-height: 1; vertical-align: -0.06em; }
+
+/* at-a-glance stat tiles above the results */
+.summary-strip {
+  display: flex; flex-wrap: wrap; gap: 0.6em;
+  margin: 0.4em 0 1.1em;
+}
+.summary-strip .stat {
+  display: flex; flex-direction: column; gap: 0.1em;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 5px;
+  padding: 0.5em 0.85em;
+  min-width: 5.5em;
+}
+.summary-strip .stat-n { font-size: 1.3em; font-weight: 700; font-variant-numeric: tabular-nums; }
+.summary-strip .stat-l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.summary-strip .stat.warn { border-left-color: var(--warn); }
+.summary-strip .stat.bad  { border-left-color: var(--bad); }
+.summary-strip .stat.hp   { border-left-color: #b8860b; }
+
+/* one card per host (collapsed from per-service matches) */
+.host-cards { display: flex; flex-direction: column; gap: 0.7em; margin: 0.4em 0 1em; }
+.host-card {
+  display: flex; gap: 0.9em;
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 6px;
+  padding: 0.8em 0.95em;
+  transition: border-color 0.12s ease;
+}
+.host-card:hover { border-color: var(--accent); }
+.host-card.is-hp   { border-left-color: #b8860b; }
+.host-card.is-crit { border-left-color: var(--bad); }
+
+.host-card .shot {
+  flex: 0 0 auto; width: 150px; height: 96px;
+  border-radius: 4px; overflow: hidden;
+  border: 1px solid var(--line); background: #000;
+  display: block;
+}
+.host-card .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 620px) { .host-card { flex-direction: column; } .host-card .shot { width: 100%; height: 150px; } }
+
+.host-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.4em; }
+.host-head { display: flex; justify-content: space-between; gap: 0.8em; align-items: baseline; flex-wrap: wrap; }
+.host-id { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
+.host-id a code { font-size: 13.5px; background: none; padding: 0; color: var(--accent); }
+.host-meta { white-space: nowrap; }
+.host-prod { color: var(--fg); }
+.host-names code { font-size: 11.5px; }
+
+.chips-row { display: flex; flex-wrap: wrap; gap: 0.35em; align-items: center; }
+
+/* port chips read as clickable, denser than tag chips */
+a.chip.port { color: var(--fg); background: var(--bg-elev2); }
+a.chip.port:hover { color: var(--accent); border-color: var(--accent); }
+
+/* semantic tag chips — colour carries meaning at a glance */
+.tagchip {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.12em 0.6em;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  border: 1px solid var(--line);
+  background: var(--bg-elev2);
+  color: var(--muted);
+}
+.tagchip.honeypot { color: #ffd166; border-color: #b8860b; background: #2a2412; }
+.tagchip.cloud    { color: #79c0ff; border-color: #1f6feb; background: #0d2440; }
+.tagchip.ics      { color: #d2a8ff; border-color: #8957e5; background: #21193a; }
+.tagchip.database { color: #56d4dd; border-color: #2d7d82; background: #0d2a2c; }
+.tagchip.security { color: #3fb950; border-color: #238636; background: #0f2616; }
+.tagchip.network  { color: #58a6ff; border-color: #2d5a9e; background: #11233f; }
+.tagchip.warn     { color: var(--warn); border-color: var(--warn); background: #2a2412; }
+.tagchip.bad      { color: var(--bad); border-color: var(--bad); background: #2d1313; }
+
+/* severity-graded CVE badges */
+.sev-badge {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0.12em 0.5em;
+  font-size: 11.5px;
+  font-family: var(--mono);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.sev-badge.critical { color: #ff7b72; border-color: var(--bad); background: #2d1313; font-weight: 600; }
+.sev-badge.high     { color: #ffa657; border-color: #db6d28; background: #2a1c10; }
+.sev-badge.medium   { color: #e3b341; border-color: var(--warn); background: #2a2412; }
+.sev-badge.low      { color: #79c0ff; border-color: #1f6feb; background: #0d2030; }
+.sev-badge.unknown  { color: var(--muted); border-color: var(--line); background: var(--bg-elev2); }
+
+/* host-detail per-service screenshot */
+.svc-shot { display: inline-block; max-width: 320px; margin: 0.3em 0 0.5em; }
+.svc-shot img { width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; display: block; }

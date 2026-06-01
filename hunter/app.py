@@ -31,8 +31,42 @@ def _epoch_local(ts) -> str:
         return str(ts)
 
 
+def _ago(iso) -> str:
+    """Compact 'time since' for a Shodan ISO timestamp: '3d', '5h', '2w', '4mo'.
+
+    Shodan stamps banners in UTC without a tz suffix; we assume UTC. Returns ''
+    for anything unparseable so the template can treat it as optional."""
+    from datetime import datetime, timezone
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    secs = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
+    mins, hours, days = secs / 60, secs / 3600, secs / 86400
+    if days >= 30:
+        return f"{int(days // 30)}mo"
+    if days >= 14:
+        return f"{int(days // 7)}w"
+    if days >= 1:
+        return f"{int(days)}d"
+    if hours >= 1:
+        return f"{int(hours)}h"
+    if mins >= 1:
+        return f"{int(mins)}m"
+    return "just now"
+
+
 templates.env.filters["epoch_local"] = _epoch_local
+templates.env.filters["ago"] = _ago
 templates.env.globals["service_url"] = pivots.service_url
+templates.env.globals["tag_meta"] = recon.tag_meta
+templates.env.globals["country_flag"] = recon.country_flag
+templates.env.globals["screenshot_of"] = recon.match_screenshot
+templates.env.globals["recon_severity"] = recon.severity_from_cvss
 
 
 def _valid_ip(ip: str) -> str:
@@ -189,6 +223,11 @@ async def ask(
         # not per-IP honeyscore — Shodan retired that lab endpoint.
         recon.annotate_matches(matches, idb, {}, config.HONEYPOT_THRESHOLD)
 
+    # Collapse the per-service matches into one card per host, then summarise the
+    # page for the at-a-glance strip above the results.
+    hosts = recon.group_by_host(matches)
+    summary = recon.result_summary(hosts)
+
     try:
         facet_groups = recon.facet_chartdata(
             shodan_api.facet_summary(query_to_run, recon.DEFAULT_FACETS)
@@ -206,8 +245,8 @@ async def ask(
     return templates.TemplateResponse(
         request, "chat.html",
         _ctx(request, user, prompt=prompt, llm_result=llm_result,
-             search=search_result, page=page, facets=facet_groups,
-             override_query=override,
+             search=search_result, hosts=hosts, summary=summary,
+             page=page, facets=facet_groups, override_query=override,
              recent=db.recent_audit(limit=10, username=user)),
     )
 
@@ -223,6 +262,14 @@ async def host_page(request: Request, ip: str, user: str = Depends(current_user)
     except Exception:
         idb = None
     host_tags = list(data.get("tags") or []) + list((idb or {}).get("tags") or [])
+    # Severity-graded CVE list merged across host-level, per-service, and free
+    # InternetDB sources (each may be a {CVE: {cvss}} dict or a bare CVE list).
+    services = data.get("data") if isinstance(data.get("data"), list) else []
+    host_vulns = recon.merge_vulns(
+        data.get("vulns"),
+        *[s.get("vulns") for s in services if isinstance(s, dict)],
+        (idb or {}).get("vulns"),
+    )
     db.log_audit(
         username=user, prompt=f"host {ip}", query=None, rationale=None,
         result_total=len(data.get("ports") or []),
@@ -233,6 +280,8 @@ async def host_page(request: Request, ip: str, user: str = Depends(current_user)
         request, "host.html",
         _ctx(request, user, ip=ip, host=data, idb=idb,
              is_honeypot=recon.honeypot_from_tags(host_tags),
+             host_vulns=host_vulns,
+             host_flag=recon.country_flag(data.get("country_code")),
              pivots=pivots.host_pivots(data, idb),
              probe_enabled=config.PROBE_ENABLED),
     )

@@ -106,7 +106,11 @@ def search(query: str, page: int = 1, *, facets: list[str] | None = None,
 
     db.spend(1)  # raises BudgetExceeded on cap
     try:
-        data = _api().search(q, page=page, minify=True, facets=facets or None)
+        # minify=False (same 1-credit cost — it's a payload flag, not billing) so
+        # the response carries the rich banner data the SOC-console UI renders:
+        # screenshots, HTTP/TLS detail, OS, transport, timestamps, per-CVE CVSS.
+        # Cached blobs are correspondingly larger but expire on SEARCH_CACHE_TTL.
+        data = _api().search(q, page=page, minify=False, facets=facets or None)
     except shodan.APIError as e:
         raise ShodanError(f"search({q!r}) failed: {e}") from e
     db.cache_put("search", key, data, config.SEARCH_CACHE_TTL)

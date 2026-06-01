@@ -63,13 +63,24 @@
     </span>
   </div>
 
+  {% if summary and summary.host_count %}
+  <div class="summary-strip">
+    <div class="stat"><span class="stat-n">{{ search.total or 0 }}</span><span class="stat-l">total matches</span></div>
+    <div class="stat"><span class="stat-n">{{ summary.host_count }}</span><span class="stat-l">hosts on page</span></div>
+    <div class="stat"><span class="stat-n">{{ summary.country_count }}</span><span class="stat-l">countries</span></div>
+    {% if summary.vuln_host_count %}<div class="stat warn"><span class="stat-n">{{ summary.vuln_host_count }}</span><span class="stat-l">vulnerable</span></div>{% endif %}
+    {% if summary.honeypot_count %}<div class="stat hp"><span class="stat-n">{{ summary.honeypot_count }}</span><span class="stat-l">🍯 honeypots</span></div>{% endif %}
+    {% if summary.top_cve %}<div class="stat bad"><span class="stat-n">{{ summary.top_cve.hosts }}×</span><span class="stat-l">{{ summary.top_cve.id }}</span></div>{% endif %}
+  </div>
+  {% endif %}
+
   {% if facets %}
   <div class="facets">
     {% for g in facets %}
-      {% if g.items %}
+      {% if g['items'] %}
       <div class="facet-group">
         <h3>{{ g.label }}</h3>
-        {% for it in g.items[:8] %}
+        {% for it in g['items'][:8] %}
           <div class="facet-row">
             <span class="facet-label" title="{{ it.value }}">{{ it.value }}</span>
             <span class="facet-track"><span class="facet-fill" style="width: {{ it.pct }}%"></span></span>
@@ -82,47 +93,62 @@
   </div>
   {% endif %}
 
-  {% if search.matches %}
-  <table class="lined">
-    <thead><tr>
-      <th>IP</th><th>Port</th><th>Org</th><th>Hostnames</th><th>Product</th><th>Tags</th><th>Vulns</th>
-    </tr></thead>
-    <tbody>
-      {% for m in search.matches %}
-        {# Merge vulns from the search response (m.vulns is a dict on paid plans)
-           with the free InternetDB enrichment so the column is never empty
-           when there's actual signal. #}
-        {% set vuln_keys = (m.vulns or {}).keys() | list %}
-        {% set idb_vulns = m.idb_vulns or [] %}
-        {% set all_vulns = (vuln_keys + idb_vulns) | unique | list %}
-        {% set tags = m.idb_tags or m.tags or [] %}
-        <tr>
-          <td>
-            <a href="/host/{{ m.ip_str }}"><code>{{ m.ip_str }}</code></a>
-            {% if m.is_honeypot %}<span class="chip hp" title="flagged as a honeypot/decoy by Shodan (honeypot tag)">🍯 honeypot</span>{% endif %}
-          </td>
-          <td><code>{{ m.port }}</code></td>
-          <td>{{ m.org or '—' }}</td>
-          <td>
-            {% for h in (m.hostnames or [])[:3] %}<code>{{ h }}</code> {% endfor %}
-            {% if (m.hostnames or [])|length > 3 %}<span class="muted">+{{ (m.hostnames|length) - 3 }}</span>{% endif %}
-          </td>
-          <td>{% if m.product %}{{ m.product }}{% if m.version %} <span class="muted">{{ m.version }}</span>{% endif %}{% endif %}</td>
-          <td>
-            {% for t in tags[:4] %}<span class="chip">{{ t }}</span> {% endfor %}
-            {% if tags|length > 4 %}<span class="muted">+{{ tags|length - 4 }}</span>{% endif %}
-          </td>
-          <td>
-            {% if all_vulns %}
-              <span class="chip bad" title="{{ all_vulns[:8] | join(', ') }}{% if all_vulns|length > 8 %} +{{ all_vulns|length - 8 }} more{% endif %}">
-                {{ all_vulns|length }} CVE
-              </span>
-            {% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  {% if hosts %}
+  <div class="host-cards">
+    {% for h in hosts %}
+    <article class="host-card{% if h.is_honeypot %} is-hp{% endif %}{% if h.vulns and h.vulns[0].severity == 'critical' %} is-crit{% endif %}">
+      {% if h.screenshot %}
+      <a class="shot" href="/host/{{ h.ip_str }}" title="open host detail">
+        <img loading="lazy" src="data:{{ h.screenshot.mime }};base64,{{ h.screenshot.data }}" alt="service screenshot of {{ h.ip_str }}">
+      </a>
+      {% endif %}
+      <div class="host-body">
+        <div class="host-head">
+          <div class="host-id">
+            {% if h.flag %}<span class="flag" title="{{ h.country_name or h.country_code }}{% if h.city %} · {{ h.city }}{% endif %}">{{ h.flag }}</span>{% endif %}
+            <a href="/host/{{ h.ip_str }}"><code>{{ h.ip_str }}</code></a>
+            {% if h.is_honeypot %}<span class="chip hp" title="flagged as a honeypot/decoy by Shodan (honeypot tag)">🍯 honeypot</span>{% endif %}
+            {% if h.os %}<span class="muted small">· {{ h.os }}</span>{% endif %}
+          </div>
+          <div class="host-meta muted small">
+            {{ h.org or h.isp or '—' }}{% if h.last_seen %} · seen {{ h.last_seen | ago }} ago{% endif %}
+          </div>
+        </div>
+
+        {% if h.products %}
+        <div class="host-prod small">{{ h.products[:3] | join('  ·  ') }}{% if h.products|length > 3 %} <span class="muted">+{{ h.products|length - 3 }}</span>{% endif %}</div>
+        {% endif %}
+
+        <div class="chips-row">
+          {% for p in h.ports[:16] %}<a class="chip port" href="/host/{{ h.ip_str }}" title="port {{ p }}">:{{ p }}</a>{% endfor %}
+          {% if h.ports|length > 16 %}<span class="muted small">+{{ h.ports|length - 16 }} more</span>{% endif %}
+        </div>
+
+        {% if h.tags %}
+        <div class="chips-row">
+          {% for t in h.tags[:8] %}{% set tm = tag_meta(t) %}<span class="tagchip {{ tm.kind }}">{% if tm.icon %}{{ tm.icon }} {% endif %}{{ tm.label }}</span>{% endfor %}
+          {% if h.tags|length > 8 %}<span class="muted small">+{{ h.tags|length - 8 }}</span>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if h.vulns %}
+        <div class="chips-row">
+          {% for v in h.vulns[:8] %}
+            <span class="sev-badge {{ v.severity }}" title="{{ v.id }}{% if v.cvss %} · CVSS {{ v.cvss }}{% endif %}{% if v.verified %} · verified{% endif %}">
+              {{ {'critical':'🔴','high':'🟠','medium':'🟡','low':'🔵'}.get(v.severity, '⚪') }} {{ v.id }}
+            </span>
+          {% endfor %}
+          {% if h.vulns|length > 8 %}<span class="muted small">+{{ h.vulns|length - 8 }} more CVEs</span>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if h.hostnames %}
+        <div class="host-names muted small">{% for hn in h.hostnames[:3] %}<code>{{ hn }}</code> {% endfor %}{% if h.hostnames|length > 3 %}<span class="muted">+{{ h.hostnames|length - 3 }}</span>{% endif %}</div>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
 
   {% if (page or 1) > 1 or search.matches|length == 100 %}
   <div class="row">
