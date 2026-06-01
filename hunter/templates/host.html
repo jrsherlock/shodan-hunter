@@ -4,7 +4,7 @@
 
 <section>
   <p class="muted"><a href="/">← back to ask</a></p>
-  <h1>Host <code>{{ ip }}</code></h1>
+  <h1>{% if host_flag %}<span class="flag">{{ host_flag }}</span> {% endif %}Host <code>{{ ip }}</code></h1>
   <p class="muted">
     {% if host._cache == 'hit' %}<span class="chip">cache hit</span>{% else %}<span class="chip warn">1 credit spent</span>{% endif %}
     {% if is_honeypot %}
@@ -40,10 +40,15 @@
       <p><strong>Ports ({{ host.ports|length }})</strong></p>
       <ul class="tags">{% for p in host.ports|sort %}<li><code>{{ p }}</code></li>{% endfor %}</ul>
     {% endif %}
-    {% set vulns = host.vulns if host.vulns is iterable and host.vulns is not string else [] %}
-    {% if vulns %}
-      <p><strong>Vulnerabilities ({{ vulns|length }})</strong></p>
-      <ul class="tags">{% for v in vulns|sort %}<li><code>{{ v }}</code></li>{% endfor %}</ul>
+    {% if host_vulns %}
+      <p><strong>Vulnerabilities ({{ host_vulns|length }})</strong></p>
+      <div class="chips-row">
+        {% for v in host_vulns %}
+          <span class="sev-badge {{ v.severity }}" title="CVSS {{ v.cvss if v.cvss is not none else 'n/a' }}{% if v.verified %} · verified{% endif %}">
+            {{ {'critical':'🔴','high':'🟠','medium':'🟡','low':'🔵'}.get(v.severity, '⚪') }} {{ v.id }}{% if v.verified %} ✓{% endif %}
+          </span>
+        {% endfor %}
+      </div>
     {% endif %}
   </div>
 </section>
@@ -81,7 +86,7 @@
       {% endif %}
       {% if idb.tags %}
         <p><strong>Tags</strong></p>
-        <div>{% for t in idb.tags %}<span class="chip">{{ t }}</span> {% endfor %}</div>
+        <div class="chips-row">{% for t in idb.tags %}{% set tm = tag_meta(t) %}<span class="tagchip {{ tm.kind }}">{% if tm.icon %}{{ tm.icon }} {% endif %}{{ tm.label }}</span>{% endfor %}</div>
       {% endif %}
     </div>
     <div>
@@ -126,11 +131,28 @@
           {% endif %}
         </p>
       {% endif %}
+      {% set shot = screenshot_of(svc) %}
+      {% if shot %}
+        <a class="shot svc-shot" href="data:{{ shot.mime }};base64,{{ shot.data }}" target="_blank" rel="noopener" title="open full size">
+          <img loading="lazy" src="data:{{ shot.mime }};base64,{{ shot.data }}" alt="screenshot of :{{ svc.port }}">
+        </a>
+      {% endif %}
       {% if svc.http and svc.http.title %}<p><strong>Title:</strong> {{ svc.http.title }}</p>{% endif %}
       {% if svc.http and svc.http.server %}<p><strong>Server:</strong> <code>{{ svc.http.server }}</code></p>{% endif %}
+      {% if svc.http and svc.http.components %}
+        <p><strong>Tech:</strong> {% for c in svc.http.components.keys() %}<span class="tagchip generic">{{ c }}</span> {% endfor %}</p>
+      {% endif %}
       {% if svc.ssl and svc.ssl.cert %}
         <p><strong>Cert subject:</strong> <code>{{ svc.ssl.cert.subject }}</code></p>
-        <p><strong>Expires:</strong> <code>{{ svc.ssl.cert.expires }}</code></p>
+        {% if svc.ssl.cert.issuer %}<p><strong>Issuer:</strong> <code>{{ svc.ssl.cert.issuer }}</code></p>{% endif %}
+        <p><strong>Expires:</strong> <code>{{ svc.ssl.cert.expires }}</code>
+          {% if svc.ssl.cert.expired %}<span class="sev-badge high">⌛ expired</span>{% endif %}</p>
+        {% if svc.ssl.jarm %}<p><strong>JARM:</strong> <code>{{ svc.ssl.jarm }}</code></p>{% endif %}
+      {% endif %}
+      {% if svc.vulns %}
+        <p><strong>CVEs:</strong>
+          {% for cve in (svc.vulns or {}).keys() %}<span class="sev-badge {{ recon_severity(svc.vulns[cve].cvss) }}" title="CVSS {{ svc.vulns[cve].cvss if svc.vulns[cve].cvss is not none else 'n/a' }}">{{ cve }}</span> {% endfor %}
+        </p>
       {% endif %}
       {% if svc.data %}<pre class="banner-box">{{ svc.data[:2500] }}</pre>{% endif %}
     </details>

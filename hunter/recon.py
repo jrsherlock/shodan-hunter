@@ -158,6 +158,247 @@ def honeypot_flag(score: float | None, threshold: float) -> bool:
     return score is not None and score >= threshold
 
 
+# ── presentation: severity, flags, semantic tags, host grouping ──────────────
+#
+# Pure helpers that turn raw Shodan banners into the richer, colour-coded shapes
+# the SOC-console UI renders. Kept here (not in templates) so they're unit-tested
+# and the Jinja stays declarative.
+
+
+def severity_from_cvss(cvss: Any) -> str:
+    """Bucket a CVSS score into critical/high/medium/low, else 'unknown'.
+
+    Mirrors the usual CVSS v3 bands. A missing/unparseable score (common for
+    InternetDB CVE lists, which carry no score) becomes 'unknown' so the UI can
+    still show the CVE without implying a severity it doesn't know."""
+    try:
+        score = float(cvss)
+    except (TypeError, ValueError):
+        return "unknown"
+    if score >= 9.0:
+        return "critical"
+    if score >= 7.0:
+        return "high"
+    if score >= 4.0:
+        return "medium"
+    if score > 0.0:
+        return "low"
+    return "unknown"
+
+
+def merge_vulns(*sources: Any) -> list[dict]:
+    """Fold any number of vuln sources into one ordered ``[{id, cvss, severity,
+    verified}]`` list, highest CVSS first.
+
+    A source may be Shodan's ``{CVE: {cvss, verified, …}}`` dict (host/service
+    banners on a paid plan) or a bare ``[CVE, …]`` list (InternetDB). The same
+    CVE seen in several services keeps the highest score and a sticky 'verified'.
+    """
+    merged: dict[str, dict] = {}
+
+    def _touch(cve: str) -> dict:
+        return merged.setdefault(cve, {"id": cve, "cvss": None, "verified": False})
+
+    for src in sources:
+        if isinstance(src, dict):
+            for cve, meta in src.items():
+                if not isinstance(cve, str):
+                    continue
+                row = _touch(cve)
+                if isinstance(meta, dict):
+                    try:
+                        score = float(meta.get("cvss"))
+                    except (TypeError, ValueError):
+                        score = None
+                    if score is not None:
+                        row["cvss"] = max(row["cvss"], score) if row["cvss"] is not None else score
+                    row["verified"] = row["verified"] or bool(meta.get("verified"))
+        elif isinstance(src, list):
+            for cve in src:
+                if isinstance(cve, str):
+                    _touch(cve)
+
+    vulns = list(merged.values())
+    for v in vulns:
+        v["severity"] = severity_from_cvss(v["cvss"])
+    # Highest CVSS first; scoreless CVEs sink to the bottom but stay visible.
+    vulns.sort(key=lambda v: (v["cvss"] if v["cvss"] is not None else -1.0), reverse=True)
+    return vulns
+
+
+def country_flag(code: Any) -> str:
+    """ISO 3166-1 alpha-2 → the regional-indicator emoji flag (e.g. 'DE' → 🇩🇪).
+
+    Returns '' for anything that isn't a 2-letter code, so the template can
+    treat the result as optional."""
+    if not isinstance(code, str):
+        return ""
+    code = code.strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return ""
+    return "".join(chr(0x1F1E6 + ord(ch) - ord("A")) for ch in code)
+
+
+# Known Shodan tags → (emoji, css-kind). 'kind' selects a colour class in the
+# stylesheet so a honeypot, a database, and an ICS device read at a glance.
+# Unknown tags fall through to the neutral 'generic' chip.
+_TAG_META: dict[str, tuple[str, str]] = {
+    "honeypot": ("🍯", "honeypot"),
+    "cloud": ("☁️", "cloud"),
+    "cdn": ("🌐", "network"),
+    "proxy": ("🛰️", "network"),
+    "vpn": ("🔒", "security"),
+    "tor": ("🧅", "security"),
+    "ics": ("⚙️", "ics"),
+    "scada": ("⚙️", "ics"),
+    "database": ("🗄️", "database"),
+    "iot": ("📟", "generic"),
+    "router": ("📡", "network"),
+    "self-signed": ("📜", "warn"),
+    "expired": ("⌛", "warn"),
+    "eol-product": ("🚫", "warn"),
+    "eol-os": ("🚫", "warn"),
+    "compromised": ("☠️", "bad"),
+    "malware": ("☠️", "bad"),
+    "c2": ("☠️", "bad"),
+    "doublepulsar": ("☠️", "bad"),
+    "videogame": ("🎮", "generic"),
+    "ssl": ("🔑", "generic"),
+    "starttls": ("✉️", "generic"),
+}
+
+
+def tag_meta(tag: Any) -> dict:
+    """Return ``{label, icon, kind}`` for a Shodan tag for colour-coded chips."""
+    icon, kind = _TAG_META.get(str(tag).strip().lower(), ("", "generic"))
+    return {"label": str(tag), "icon": icon, "kind": kind}
+
+
+def match_screenshot(banner: Any) -> dict | None:
+    """Extract a renderable screenshot ``{data, mime}`` from a search match or
+    a host service banner, else None.
+
+    Shodan stashes the base64 image under ``opts.screenshot`` (most common) or a
+    top-level ``screenshot`` key. Only present when the crawler captured one
+    (RDP/VNC/RTSP/X11/webcam services)."""
+    if not isinstance(banner, dict):
+        return None
+    opts = banner.get("opts") if isinstance(banner.get("opts"), dict) else {}
+    shot = opts.get("screenshot") or banner.get("screenshot")
+    if isinstance(shot, dict) and shot.get("data"):
+        return {"data": shot["data"], "mime": shot.get("mime") or "image/jpeg"}
+    return None
+
+
+def group_by_host(matches: list[dict] | None) -> list[dict]:
+    """Collapse per-service Shodan matches into one card per host.
+
+    Shodan returns a separate match for every open port, so a host exposing six
+    services becomes six near-identical rows. We fold them by ``ip_str`` —
+    unioning ports, hostnames, products, tags and vulns, taking the most recent
+    ``last_seen`` and the first available screenshot — into the host dicts the
+    card grid renders. Order of first appearance is preserved (Shodan's relevance
+    order). Expects ``annotate_matches`` to have already run (uses idb_* fields).
+    """
+    hosts: dict[str, dict] = {}
+    order: list[str] = []
+
+    for m in matches or []:
+        ip = m.get("ip_str")
+        if not ip:
+            continue
+        h = hosts.get(ip)
+        if h is None:
+            h = {
+                "ip_str": ip, "org": None, "isp": None, "asn": None, "os": None,
+                "country_code": None, "country_name": None, "city": None,
+                "hostnames": [], "ports": [], "products": [], "tags": [],
+                "is_honeypot": False, "screenshot": None, "last_seen": None,
+                "_vuln_sources": [],
+            }
+            hosts[ip] = h
+            order.append(ip)
+
+        loc = m.get("location") if isinstance(m.get("location"), dict) else {}
+        for field, value in (
+            ("org", m.get("org")), ("isp", m.get("isp")),
+            ("asn", m.get("asn")), ("os", m.get("os")),
+            ("country_code", loc.get("country_code") or m.get("country_code")),
+            ("country_name", loc.get("country_name") or m.get("country_name")),
+            ("city", loc.get("city") or m.get("city")),
+        ):
+            if not h[field] and value:
+                h[field] = value
+
+        port = m.get("port")
+        if isinstance(port, int) and port not in h["ports"]:
+            h["ports"].append(port)
+        for hn in (m.get("hostnames") or []):
+            if hn not in h["hostnames"]:
+                h["hostnames"].append(hn)
+        product = m.get("product")
+        if product:
+            label = f"{product} {m.get('version')}".strip() if m.get("version") else product
+            if label not in h["products"]:
+                h["products"].append(label)
+        for t in list(m.get("idb_tags") or []) + list(m.get("tags") or []):
+            if t not in h["tags"]:
+                h["tags"].append(t)
+        h["is_honeypot"] = h["is_honeypot"] or bool(m.get("is_honeypot"))
+
+        ts = m.get("timestamp")
+        if ts and (h["last_seen"] is None or str(ts) > str(h["last_seen"])):
+            h["last_seen"] = ts
+        if h["screenshot"] is None:
+            shot = match_screenshot(m)
+            if shot:
+                h["screenshot"] = shot
+        if m.get("vulns"):
+            h["_vuln_sources"].append(m["vulns"])
+        if m.get("idb_vulns"):
+            h["_vuln_sources"].append(m["idb_vulns"])
+
+    out: list[dict] = []
+    for ip in order:
+        h = hosts[ip]
+        h["ports"].sort()
+        h["vulns"] = merge_vulns(*h.pop("_vuln_sources"))
+        h["flag"] = country_flag(h["country_code"])
+        out.append(h)
+    return out
+
+
+def result_summary(hosts: list[dict]) -> dict:
+    """At-a-glance stats for the strip above the results: distinct hosts and
+    countries, how many are honeypots / carry vulns, and the single most common
+    CVE across the page."""
+    countries: set[str] = set()
+    honeypots = 0
+    vuln_hosts = 0
+    cve_counts: dict[str, int] = {}
+    for h in hosts:
+        if h.get("country_code"):
+            countries.add(h["country_code"])
+        if h.get("is_honeypot"):
+            honeypots += 1
+        vulns = h.get("vulns") or []
+        if vulns:
+            vuln_hosts += 1
+        for v in vulns:
+            cve_counts[v["id"]] = cve_counts.get(v["id"], 0) + 1
+    top_cve = None
+    if cve_counts:
+        cve, n = max(cve_counts.items(), key=lambda kv: kv[1])
+        top_cve = {"id": cve, "hosts": n}
+    return {
+        "host_count": len(hosts),
+        "country_count": len(countries),
+        "honeypot_count": honeypots,
+        "vuln_host_count": vuln_hosts,
+        "top_cve": top_cve,
+    }
+
+
 # ── facet chart shaping ──────────────────────────────────────────────────────
 
 
