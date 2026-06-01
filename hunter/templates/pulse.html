@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}Internet Pulse · shodan-hunter{% endblock %}
+{% block content %}
+
+<section class="pulse-hero-head">
+  <div class="row spread">
+    <div>
+      <h1>Internet Pulse <span class="live-dot" title="global Shodan crawler snapshot"></span></h1>
+      <p class="muted">What Shodan's crawlers are seeing across the entire Internet — categories,
+        ports, protocols, top networks, geography and the CVEs showing up most. Free, keyless,
+        zero query credits.</p>
+    </div>
+    <div class="pulse-asof">
+      {% if view and view.updated %}<div class="asof-date">{{ view.updated }}</div><div class="muted small">snapshot date</div>{% endif %}
+      <a class="muted small" href="?refresh=1">↻ refresh</a>
+      {% if cache_state %}<span class="chip small">{{ cache_state }}</span>{% endif %}
+    </div>
+  </div>
+</section>
+
+{% if pulse_error %}
+  <div class="banner bad">Couldn’t load the data-status snapshot: {{ pulse_error }}</div>
+{% endif %}
+
+{% if view %}
+
+{# ── hero stat band ─────────────────────────────────────────────────────── #}
+<div class="hero-band">
+  <div class="hero-tile accent">
+    <div class="hero-n">{{ view.hero.total | human }}</div>
+    <div class="hero-l">services indexed</div>
+  </div>
+  <div class="hero-tile">
+    <div class="hero-n">{{ view.hero.country_count }}</div>
+    <div class="hero-l">countries observed</div>
+  </div>
+  <div class="hero-tile">
+    <div class="hero-n">{{ view.hero.category_count }}</div>
+    <div class="hero-l">service categories</div>
+  </div>
+  <div class="hero-tile">
+    <div class="hero-n">:{{ view.hero.top_port }}</div>
+    <div class="hero-l">most-exposed port</div>
+  </div>
+  <div class="hero-tile">
+    <div class="hero-n">{{ view.hero.tcp_pct }}<span class="hero-u">%</span></div>
+    <div class="hero-l">TCP vs {{ view.hero.udp_pct }}% UDP</div>
+  </div>
+  <div class="hero-tile">
+    <div class="hero-n">{{ view.hero.cve_count }}</div>
+    <div class="hero-l">CVEs tracked</div>
+  </div>
+</div>
+
+{# ── doughnut ring row ──────────────────────────────────────────────────── #}
+<div class="ring-row">
+  <div class="card ring-card">
+    <h2>Service Categories</h2>
+    <div class="ring-flex">
+      <div class="ring" style="background: {{ view.categories.gradient }};">
+        <div class="ring-hole"><span class="ring-center">{{ view.hero.total | human }}</span><span class="muted small">total</span></div>
+      </div>
+      <ul class="legend">
+        {% for s in view.categories.segments[:8] %}
+        <li><span class="swatch" style="background: {{ s.color }};"></span>
+          <span class="leg-name">{{ s.name }}</span>
+          <span class="leg-pct">{{ s.pct }}%</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="card ring-card">
+    <h2>Protocol Distribution</h2>
+    <div class="ring-flex">
+      <div class="ring" style="background: {{ view.protocols.gradient }};">
+        <div class="ring-hole"><span class="ring-center">{{ view.hero.tcp_pct }}%</span><span class="muted small">TCP</span></div>
+      </div>
+      <ul class="legend">
+        {% for s in view.protocols.segments %}
+        <li><span class="swatch" style="background: {{ s.color }};"></span>
+          <span class="leg-name">{{ s.name | upper }}</span>
+          <span class="leg-pct">{{ s.pct }}%</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="card ring-card">
+    <h2>Hostname Coverage</h2>
+    <div class="ring-flex">
+      <div class="ring" style="background: {{ view.hostname.gradient }};">
+        <div class="ring-hole"><span class="ring-center">{{ view.hostname.pct }}%</span><span class="muted small">have names</span></div>
+      </div>
+      <ul class="legend">
+        <li><span class="swatch" style="background: var(--accent);"></span>
+          <span class="leg-name">Hostname-sourced</span>
+          <span class="leg-pct">{{ view.hostname.scanned | human }}</span></li>
+        <li><span class="swatch" style="background: #30363d;"></span>
+          <span class="leg-name">IP-only</span>
+          <span class="leg-pct">{{ (view.hero.total - view.hostname.scanned) | human }}</span></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+{# ── geography ──────────────────────────────────────────────────────────── #}
+<section class="card">
+  <h2>Geographic Exposure <span class="muted">· top countries by indexed services</span></h2>
+  <div class="bar-grid two">
+    {% for c in view.countries %}
+    <div class="barline">
+      <span class="bar-key">{% if c.flag %}{{ c.flag }} {% endif %}{{ c.label }}</span>
+      <span class="bar-track"><span class="bar-fill geo" style="width: {{ c.barpct }}%"></span></span>
+      <span class="bar-val" title="{{ c.count | commas }} services · {{ c.pct }}% of all">{{ c.count | human }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{# ── ports ──────────────────────────────────────────────────────────────── #}
+<section class="card">
+  <h2>Top Ports <span class="muted">· what's listening, Internet-wide</span></h2>
+  <div class="bar-grid">
+    {% for p in view.ports %}
+    <div class="barline">
+      <span class="bar-key"><a class="chip port" href="/?q=port:{{ p.label }}" title="search this port in the team tool">:{{ p.label }}</a></span>
+      <span class="bar-track"><span class="bar-fill port" style="width: {{ p.barpct }}%"></span></span>
+      <span class="bar-val" title="{{ p.count | commas }} services">{{ p.count | human }} <span class="muted small">{{ p.pct }}%</span></span>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+{# ── orgs + products side by side ───────────────────────────────────────── #}
+<div class="grid-2">
+  <section class="card">
+    <h2>Top Organizations</h2>
+    <div class="bar-grid">
+      {% for o in view.orgs %}
+      <div class="barline">
+        <span class="bar-key" title="{{ o.label }}">{{ o.label }}</span>
+        <span class="bar-track"><span class="bar-fill org" style="width: {{ o.barpct }}%"></span></span>
+        <span class="bar-val">{{ o.count | human }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Top Products</h2>
+    <div class="bar-grid">
+      {% for pr in view.products %}
+      <div class="barline">
+        <span class="bar-key" title="{{ pr.label }}">{{ pr.label }}</span>
+        <span class="bar-track"><span class="bar-fill prod" style="width: {{ pr.barpct }}%"></span></span>
+        <span class="bar-val">{{ pr.count | human }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+</div>
+
+{# ── CVE threat board ───────────────────────────────────────────────────── #}
+<section>
+  <h2 class="section-h">Vulnerability Spotlight <span class="muted">· the most prevalent CVEs on the Internet right now</span></h2>
+  <div class="grid-2">
+    <div class="card cve-card">
+      <h3 class="cve-h crit">🔴 Critical <span class="muted small">CVSS ≥ 9.0</span></h3>
+      {% if view.cve_critical %}
+      {% for v in view.cve_critical %}
+      <div class="cve-row">
+        <a class="cve-id" href="/?q=vuln:{{ v.id }}" title="pivot: hosts exposed to {{ v.id }}">{{ v.id }}</a>
+        <span class="sev-badge {{ v.severity }}">CVSS {{ v.cvss }}</span>
+        <span class="epss"><span class="epss-track"><span class="epss-fill" style="width: {{ v.epss_pct }}%"></span></span><span class="epss-n">{{ v.epss_pct }}%</span></span>
+        <span class="cve-count" title="{{ v.count | commas }} exposed services">{{ v.count | human }}</span>
+      </div>
+      {% endfor %}
+      {% else %}<p class="muted">No critical-CVSS CVEs in this snapshot.</p>{% endif %}
+    </div>
+
+    <div class="card cve-card">
+      <h3 class="cve-h high">🟠 High Exploit Risk <span class="muted small">EPSS ≥ 0.5</span></h3>
+      {% if view.cve_high_epss %}
+      {% for v in view.cve_high_epss %}
+      <div class="cve-row">
+        <a class="cve-id" href="/?q=vuln:{{ v.id }}" title="pivot: hosts exposed to {{ v.id }}">{{ v.id }}</a>
+        <span class="sev-badge {{ v.severity }}">CVSS {{ v.cvss if v.cvss is not none else '—' }}</span>
+        <span class="epss hot"><span class="epss-track"><span class="epss-fill" style="width: {{ v.epss_pct }}%"></span></span><span class="epss-n">{{ v.epss_pct }}%</span></span>
+        <span class="cve-count" title="{{ v.count | commas }} exposed services">{{ v.count | human }}</span>
+      </div>
+      {% endfor %}
+      {% else %}<p class="muted">No high-EPSS CVEs in this snapshot.</p>{% endif %}
+    </div>
+  </div>
+  <p class="muted small">EPSS = probability of exploitation in the wild (next 30 days). Counts are services seen Internet-wide. Click a CVE to pivot into a team search.</p>
+</section>
+
+{% endif %}
+{% endblock %}
