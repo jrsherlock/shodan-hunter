@@ -99,6 +99,7 @@ DOMAIN_CACHE_TTL = _int("SH_DOMAIN_CACHE_TTL", 21600)      # 6h — passive DNS 
 HONEYSCORE_CACHE_TTL = _int("SH_HONEYSCORE_CACHE_TTL", 86400)  # 24h
 DNS_CACHE_TTL = _int("SH_DNS_CACHE_TTL", 3600)            # 1h for resolve/reverse
 QUERIES_CACHE_TTL = _int("SH_QUERIES_CACHE_TTL", 3600)    # 1h for community query directory
+DATASTATUS_CACHE_TTL = _int("SH_DATASTATUS_CACHE_TTL", 21600)  # 6h — the snapshot refreshes ~daily
 
 # Honeypot flag: InternetDB/honeyscore >= this fraction earns a "honeypot?" badge.
 HONEYPOT_THRESHOLD = _float("SH_HONEYPOT_THRESHOLD", 0.5)

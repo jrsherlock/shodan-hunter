@@ -12,7 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 import ipaddress
 
-from . import config, db, internetdb, llm, monitor, pivots, probe, recon, scans, shodan_api
+from . import config, datastatus, db, internetdb, llm, monitor, pivots, probe, recon, scans, shodan_api
 from .auth import current_user, require_same_origin
 from .db import BudgetExceeded
 
@@ -60,8 +60,30 @@ def _ago(iso) -> str:
     return "just now"
 
 
+def _human(n) -> str:
+    """Compact big-number formatting for hero tiles: 211717047 → '211.7M'."""
+    try:
+        n = float(n)
+    except (TypeError, ValueError):
+        return "—"
+    for unit, size in (("B", 1e9), ("M", 1e6), ("K", 1e3)):
+        if abs(n) >= size:
+            return f"{n / size:.1f}{unit}".replace(".0", "")
+    return f"{int(n)}"
+
+
+def _commas(n) -> str:
+    """Thousands-separated integer, e.g. 16359262 → '16,359,262'."""
+    try:
+        return f"{int(n):,}"
+    except (TypeError, ValueError):
+        return str(n)
+
+
 templates.env.filters["epoch_local"] = _epoch_local
 templates.env.filters["ago"] = _ago
+templates.env.filters["human"] = _human
+templates.env.filters["commas"] = _commas
 templates.env.globals["service_url"] = pivots.service_url
 templates.env.globals["tag_meta"] = recon.tag_meta
 templates.env.globals["country_flag"] = recon.country_flag
@@ -495,6 +517,29 @@ async def library_page(request: Request, user: str = Depends(current_user),
     return templates.TemplateResponse(
         request, "library.html",
         _ctx(request, user, q=q, page=page, items=items, library_error=library_error),
+    )
+
+
+# ── internet pulse (global data-status dashboard; free, no credits) ──────────
+
+
+@app.get("/pulse", response_class=HTMLResponse)
+async def pulse_page(request: Request, user: str = Depends(current_user),
+                     refresh: bool = False):
+    """Shodan's global "Data Status" snapshot, re-rendered as a richer dashboard.
+    Keyless and free — no Shodan API key, no query credits."""
+    view = None
+    pulse_error = None
+    cache_state = None
+    try:
+        snap = datastatus.snapshot(use_cache=not refresh)
+        cache_state = snap.get("_cache")
+        view = datastatus.build_view(snap)
+    except datastatus.DataStatusError as e:
+        pulse_error = str(e)
+    return templates.TemplateResponse(
+        request, "pulse.html",
+        _ctx(request, user, view=view, pulse_error=pulse_error, cache_state=cache_state),
     )
 
 
