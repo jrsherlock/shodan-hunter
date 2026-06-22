@@ -1,9 +1,8 @@
 """Thin Shodan client: search, count, host, DNS, scan, alerts, labs.
 
-Every paid endpoint goes through the shared budget (db.spend) and SQLite cache;
-free endpoints (count, honeyscore, dns/resolve, dns/reverse, community queries)
-skip the budget. The official `shodan` library lacks dns/resolve + dns/reverse,
-so those two are issued as raw REST against the same base URL and key.
+Every paid endpoint goes through the SQLite cache so repeat lookups are free.
+The official `shodan` library lacks dns/resolve + dns/reverse, so those two are
+issued as raw REST against the same base URL and key.
 """
 
 from __future__ import annotations
@@ -104,7 +103,6 @@ def search(query: str, page: int = 1, *, facets: list[str] | None = None,
             hit["_cache"] = "hit"
             return hit
 
-    db.spend(1)  # raises BudgetExceeded on cap
     try:
         data = _api().search(q, page=page, minify=True, facets=facets or None)
     except shodan.APIError as e:
@@ -164,7 +162,6 @@ def host(ip: str, *, use_cache: bool = True) -> dict[str, Any]:
             hit["_cache"] = "hit"
             return hit
 
-    db.spend(1)
     try:
         data = _api().host(ip, history=False, minify=False)
     except shodan.APIError as e:
@@ -252,7 +249,6 @@ def domain_info(domain: str, *, page: int = 1, use_cache: bool = True) -> dict[s
         if hit is not None:
             hit["_cache"] = "hit"
             return hit
-    db.spend(1)
     try:
         data = _api().dns.domain_info(domain, page=page)
     except shodan.APIError as e:
@@ -310,7 +306,7 @@ def dns_reverse(ips: Iterable[str]) -> dict[str, list[str]]:
     return out
 
 
-# ── on-demand scanning (uses SCAN credits, not the query budget) ──────────
+# ── on-demand scanning (uses SCAN credits, not query credits) ──────────
 
 
 def submit_scan(targets: str | list[str], *, force: bool = False) -> dict[str, Any]:

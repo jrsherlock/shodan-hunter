@@ -6,7 +6,6 @@ import json
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from . import config
@@ -50,13 +49,6 @@ def _ensure() -> None:
                     value_json TEXT NOT NULL,
                     expires_at INTEGER NOT NULL,
                     PRIMARY KEY (ns, key)
-                );
-
-                CREATE TABLE IF NOT EXISTS counters (
-                    day   TEXT NOT NULL,
-                    name  TEXT NOT NULL,
-                    count INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (day, name)
                 );
 
                 -- Local mirror of Shodan network alerts. Source of truth is
@@ -167,53 +159,6 @@ def cache_put(ns: str, key: str, value: Any, ttl: int) -> None:
                    expires_at = excluded.expires_at""",
             (ns, key, json.dumps(value, default=str), int(time.time()) + ttl),
         )
-
-
-# ── daily budget ──────────────────────────────────────────────────────────
-
-
-def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def credits_used_today() -> int:
-    _ensure()
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT count FROM counters WHERE day=? AND name='query'", (_today(),),
-        ).fetchone()
-    return int(row["count"]) if row else 0
-
-
-class BudgetExceeded(RuntimeError):
-    pass
-
-
-def spend(n: int = 1) -> int:
-    _ensure()
-    cap = config.DAILY_BUDGET
-    if cap > 0 and credits_used_today() >= cap:
-        raise BudgetExceeded(
-            f"Team daily budget exhausted ({cap}). Raise SH_DAILY_BUDGET or wait for UTC midnight."
-        )
-    with _connect() as conn:
-        conn.execute(
-            """INSERT INTO counters (day, name, count) VALUES (?, 'query', ?)
-               ON CONFLICT(day, name) DO UPDATE SET count = count + excluded.count""",
-            (_today(), n),
-        )
-    return credits_used_today()
-
-
-def budget_status() -> dict:
-    used = credits_used_today()
-    cap = config.DAILY_BUDGET
-    return {
-        "used": used,
-        "cap": cap,
-        "enabled": cap > 0,
-        "exceeded": cap > 0 and used >= cap,
-    }
 
 
 # ── alert mirror (attribution for Shodan network alerts) ───────────────────

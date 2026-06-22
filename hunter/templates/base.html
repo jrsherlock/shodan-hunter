@@ -22,12 +22,6 @@
     <div class="topbar-right">
       {% if not status.shodan %}<span class="chip bad">no Shodan key</span>{% endif %}
       {% if not status.azure_openai %}<span class="chip bad">no Azure OpenAI</span>{% endif %}
-      {% if budget.enabled %}
-        <span class="chip{% if budget.exceeded %} bad{% elif budget.cap - budget.used < 20 %} warn{% endif %}"
-              title="Team daily spend vs. configured cap (SH_DAILY_BUDGET)">
-          team today {{ budget.used }}/{{ budget.cap }}
-        </span>
-      {% endif %}
       {% if shodan_info %}
         <span class="chip{% if shodan_info.query_credits is not none and shodan_info.query_credits < 500 %} warn{% endif %}"
               title="Live query credits remaining on the Shodan account (cached 5 min)">
@@ -41,6 +35,28 @@
   </header>
   <main>{% block content %}{% endblock %}</main>
   <footer>shodan-hunter · internal team tool · your Shodan key, your liability</footer>
+
+  <div id="working" class="working-overlay" hidden aria-live="polite" role="status">
+    <div class="working-card"><span class="spinner"></span><span id="working-msg">Working…</span></div>
+  </div>
+  <script>
+    // Full-page POST/GET form submits navigate and then wait on Shodan/Azure
+    // with no feedback. Show a blocking overlay on submit; it clears when the
+    // next page loads (or on bfcache restore via pageshow).
+    (function () {
+      var overlay = document.getElementById('working');
+      var msg = document.getElementById('working-msg');
+      if (!overlay) return;
+      document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!(form instanceof HTMLFormElement)) return;
+        msg.textContent = form.dataset.working || 'Working…';
+        // Defer so the form's button value is still serialized into the POST.
+        requestAnimationFrame(function () { overlay.hidden = false; });
+      });
+      window.addEventListener('pageshow', function () { overlay.hidden = true; });
+    })();
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

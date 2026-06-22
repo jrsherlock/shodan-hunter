@@ -14,8 +14,7 @@ It is:
 - A chat-style web UI that converts natural language → Shodan query.
 - Multi-user behind HTTP basic auth (each teammate has their own username
   so the audit log attributes queries).
-- A thin wrapper around the Shodan REST API with short-lived result caching
-  and a soft daily query-credit budget across the team.
+- A thin wrapper around the Shodan REST API with short-lived result caching.
 - v0.3.0: eight additional capabilities covering free enrichment, DNS,
   domain recon, on-demand scanning, network alerts, and more (see below).
 
@@ -82,7 +81,7 @@ consumed.
 | `GET` | `/idb/{ip}` | InternetDB JSON (free, 0 credits) |
 | `GET` | `/api/honeyscore/{ip}` | Legacy honeyscore shim — Shodan retired it, returns `null`; honeypot status shows inline as a 🍯 tag badge |
 | `GET` | `/api/count` | Shodan result count (free) |
-| `GET` | `/api/info` | API/plan info + budget status |
+| `GET` | `/api/info` | API/plan info |
 | `GET` | `/healthz` | Health check (no auth) |
 
 ## Configuration
@@ -97,7 +96,6 @@ All via `.env`. See `.env.example` for every option. The important ones:
 | `AZURE_OPENAI_DEPLOYMENT` | The *deployment name* in your Azure resource (not the model name). |
 | `AZURE_OPENAI_API_VERSION` | Default `2024-10-21`. |
 | `SH_AUTH_USERS` | `user1:pw1,user2:pw2`. Each user logs in with their own credentials so the audit log identifies them. |
-| `SH_DAILY_BUDGET` | Total query credits the team can spend per UTC day. |
 
 ### New configuration (v0.3)
 
@@ -147,10 +145,10 @@ The host detail page surfaces two kinds of follow-up:
 
 ## Liability note
 
-Every Shodan call is attributed to your shared API key. The daily budget is
-a soft cap — set it. The basic-auth wall is not an audit boundary; assume
-anyone with the credentials can drain your credits. Don't put this on the
-public internet without a reverse proxy / SSO in front.
+Every Shodan call is attributed to your shared API key. The basic-auth wall is
+not an audit boundary; assume anyone with the credentials can drain your
+credits. Don't put this on the public internet without a reverse proxy / SSO in
+front.
 
 On-demand scanning (`/scan`) uses scan credits, which are separate from
 query credits and billed differently. Only enable `SH_ENABLE_SCAN` if you

@@ -7,8 +7,8 @@
   Shodan query; the result lands below. The generated query is editable so you
   can refine without retyping the whole prompt.</p>
 
-  <form method="post" action="/ask" class="ask-form">
-    <textarea name="prompt" rows="2" placeholder="e.g. Find exposed RDP on hosts owned by Acme Industries" autofocus>{{ prompt or '' }}</textarea>
+  <form method="post" action="/ask" class="ask-form" data-working="Asking Azure OpenAI, then searching Shodan…">
+    <textarea name="prompt" rows="2" placeholder="e.g. Internet-facing RDP and VPN portals owned by org &quot;Client Corp&quot;" autofocus>{{ prompt or '' }}</textarea>
     <input type="hidden" name="page" value="1">
     <div class="row">
       <button>Ask</button>
@@ -28,7 +28,7 @@
     <h2>Generated query</h2>
     <span class="muted">model: <code>{{ llm_result.model or 'n/a' }}</code></span>
   </div>
-  <form method="post" action="/ask" class="rerun-form">
+  <form method="post" action="/ask" class="rerun-form" data-working="Running query against Shodan…">
     <input type="hidden" name="prompt" value="{{ llm_result.prompt or prompt }}">
     <input type="hidden" name="page" value="1">
     <input class="mono big" name="override_query" value="{{ llm_result.query }}">
@@ -83,6 +83,14 @@
   {% endif %}
 
   {% if search.matches %}
+  {% if llm_result and llm_result.query %}
+  <div class="row spread">
+    <span class="exports muted">Export this page
+      <a href="/export/search?q={{ llm_result.query | urlencode }}&amp;page={{ page }}&amp;format=csv">CSV</a>
+      <a href="/export/search?q={{ llm_result.query | urlencode }}&amp;page={{ page }}&amp;format=json">JSON</a>
+    </span>
+  </div>
+  {% endif %}
   <table class="lined">
     <thead><tr>
       <th>IP</th><th>Port</th><th>Org</th><th>Hostnames</th><th>Product</th><th>Tags</th><th>Vulns</th>

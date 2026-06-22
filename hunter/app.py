@@ -6,15 +6,15 @@ import logging
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 import ipaddress
 
-from . import config, db, internetdb, llm, monitor, pivots, probe, recon, scans, shodan_api
+from . import (config, db, export, internetdb, llm, monitor, pivots, probe,
+               recon, scans, shodan_api)
 from .auth import current_user, require_same_origin
-from .db import BudgetExceeded
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -52,15 +52,19 @@ app = FastAPI(title="shodan-hunter", version="0.3.0")
 app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
 
+# Engagement-oriented starting points. Each is scoped to a customer the way a
+# red team works in practice — by org, netblock (net:), or cert/hostname for the
+# client's domain — so the query stays inside the rules of engagement. Swap
+# "Client Corp" / clientcorp.com / the documentation netblock for the real scope.
 EXAMPLES = [
-    "Find exposed RDP on hosts owned by org \"Acme Industries\"",
-    "Show me Apache servers in Germany running version 2.4.49",
-    "Hosts with Log4Shell CVE-2021-44228",
-    "Open Elasticsearch instances with no authentication",
-    "Servers presenting SSL certificates for *.example.com",
-    "Unpatched Exchange servers in the US",
-    "Webcams indexed in Iowa",
-    "MongoDB databases on port 27017 in Canada",
+    "Map the external attack surface for org \"Client Corp\"",
+    "Internet-facing RDP and SSH on net 203.0.113.0/24",
+    "Fortinet and Ivanti SSL-VPN gateways exposed by org \"Client Corp\"",
+    "Citrix NetScaler hosts affected by Citrix Bleed CVE-2023-4966",
+    "Forgotten assets: hosts presenting TLS certificates for clientcorp.com",
+    "Exposed login portals on subdomains of clientcorp.com",
+    "Unauthenticated Elasticsearch, MongoDB, or Redis owned by org \"Client Corp\"",
+    "Internet-exposed ICS: Veeder-Root tank gauges on port 10001",
 ]
 
 
@@ -73,7 +77,6 @@ def _ctx(request: Request, user: str, **extra) -> dict:
         "request": request,
         "user": user,
         "status": config.status(),
-        "budget": db.budget_status(),
         "shodan_info": shodan_info,
         "examples": EXAMPLES,
         **extra,
@@ -103,11 +106,6 @@ async def _h_llm(request: Request, exc: llm.LLMError):
     return _err(request, "LLM error", str(exc), 502)
 
 
-@app.exception_handler(BudgetExceeded)
-async def _h_budget(request: Request, exc: BudgetExceeded):
-    return _err(request, "Daily budget exceeded", str(exc), 429)
-
-
 def _err(request: Request, title: str, detail: str, code: int):
     if request.url.path.startswith("/api/"):
         return JSONResponse({"error": title, "detail": detail}, status_code=code)
@@ -115,8 +113,7 @@ def _err(request: Request, title: str, detail: str, code: int):
     return templates.TemplateResponse(
         request, "error.html",
         {"request": request, "user": None, "status": config.status(),
-         "budget": db.budget_status(), "examples": EXAMPLES,
-         "title": title, "detail": detail},
+         "examples": EXAMPLES, "title": title, "detail": detail},
         status_code=code,
     )
 
@@ -304,6 +301,99 @@ async def dns_run(request: Request, user: str = Depends(current_user),
     )
 
 
+# ── result export (CSV / JSON, free; re-fetches via cache) ───────────────────
+
+
+def _download(stem: str, kind: str, fmt: str, columns: list[str],
+              rows: list[dict], meta: dict) -> Response:
+    """Build a downloadable CSV or JSON attachment from shaped rows."""
+    fmt = (fmt or "csv").strip().lower()
+    if fmt == "csv":
+        body, media = export.csv_bytes(columns, rows), "text/csv; charset=utf-8"
+    elif fmt == "json":
+        body, media = export.json_bytes(meta, columns, rows), "application/json"
+    else:
+        raise HTTPException(422, "format must be 'csv' or 'json'")
+    fname = export.filename(stem, kind, fmt)
+    return Response(content=body, media_type=media,
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.get("/export/domain")
+async def export_domain(user: str = Depends(current_user),
+                        q: str = Query(...), format: str = Query("csv")):
+    """Export domain-recon records. Served from the 6 h domain cache, so an
+    export right after viewing the page spends no credit."""
+    domain = (q or "").strip()
+    if not domain:
+        raise HTTPException(422, "missing domain (?q=)")
+    data = shodan_api.domain_info(domain)
+    columns, rows = export.domain_rows(data)
+    db.log_audit(username=user, prompt=f"export domain {domain} ({format})",
+                 query=domain, rationale=None, result_total=len(rows), error=None,
+                 action="export", credits=0 if data.get("_cache") == "hit" else 1)
+    return _download(domain, "domain", format, columns, rows,
+                     {"type": "domain", "domain": domain})
+
+
+@app.get("/export/search")
+async def export_search(user: str = Depends(current_user),
+                        q: str = Query(...), page: int = Query(1),
+                        format: str = Query("csv")):
+    """Export the current page of search results (Shodan returns 100/page). Served
+    from the short-lived search cache, so exporting what you're viewing is free."""
+    query = (q or "").strip()
+    if not query:
+        raise HTTPException(422, "missing query (?q=)")
+    result = shodan_api.search(query, page=page)
+    matches = result.get("matches") or []
+    # Re-apply the free InternetDB enrichment so exported tags/vulns/honeypot
+    # match the on-screen table. Best-effort — never block the download.
+    try:
+        ips = [m.get("ip_str") for m in matches if m.get("ip_str")]
+        recon.annotate_matches(matches, internetdb.lookup_many(ips), {},
+                               config.HONEYPOT_THRESHOLD)
+    except Exception:
+        pass
+    columns, rows = export.search_rows(matches)
+    db.log_audit(username=user, prompt=f"export search ({format})", query=query,
+                 rationale=None, result_total=len(rows), error=None,
+                 action="export", credits=0 if result.get("_cache") == "hit" else 1)
+    return _download(query, "search", format, columns, rows,
+                     {"type": "search", "query": query, "page": page,
+                      "total": result.get("total")})
+
+
+@app.get("/export/host/{ip}")
+async def export_host(ip: str, user: str = Depends(current_user),
+                      format: str = Query("csv")):
+    """Export a host's exposed services (one row per service). Served from the
+    1 h host cache, so an export right after viewing the host page is free."""
+    ip = _valid_ip(ip)
+    data = shodan_api.host(ip, use_cache=True)
+    try:
+        idb = internetdb.lookup(ip)
+    except Exception:
+        idb = None
+    columns, rows = export.host_rows(data, idb)
+    db.log_audit(username=user, prompt=f"export host {ip} ({format})", query=None,
+                 rationale=None, result_total=len(rows), error=None,
+                 action="export", credits=0 if data.get("_cache") == "hit" else 1)
+    return _download(ip, "host", format, columns, rows, {"type": "host", "ip": ip})
+
+
+@app.get("/export/dns")
+async def export_dns(user: str = Depends(current_user),
+                     blob: str = Query(""), format: str = Query("csv")):
+    """Export bulk-DNS forward/reverse results. Always free."""
+    result = recon.bulk_dns(blob)
+    columns, rows = export.dns_rows(result)
+    db.log_audit(username=user, prompt=f"export dns ({format})", query=None,
+                 rationale=None, result_total=len(rows), error=None,
+                 action="export", credits=0)
+    return _download("dns", "dns", format, columns, rows, {"type": "dns"})
+
+
 # ── on-demand scan (scan credits; authorization-gated) ───────────────────────
 
 
@@ -462,7 +552,6 @@ async def api_count(q: str = Query(..., min_length=1),
 async def api_info(user: str = Depends(current_user)):
     return {
         **shodan_api.api_info(),
-        "budget": db.budget_status(),
         "config": config.status(),
     }
 
@@ -504,9 +593,36 @@ async def probe_run(request: Request, user: str = Depends(current_user),
     return result
 
 
+@app.post("/atg", dependencies=[Depends(require_same_origin)])
+async def atg_probe(request: Request, user: str = Depends(current_user),
+                    ip: str = Form(...), port: int = Form(10001)):
+    """Active Veeder-Root ATG check: send the read-only In-Tank Inventory
+    command (<SOH>I20100) and parse the reply. Same gate (SH_ENABLE_PROBE),
+    same-origin guard, and audit log as /probe. No setup/write commands are
+    ever sent — strictly reconnaissance equivalent to the Shodan banner."""
+    if not config.PROBE_ENABLED:
+        raise HTTPException(403, "Probing is disabled (set SH_ENABLE_PROBE=1).")
+    ip = _valid_ip(ip)
+    try:
+        result = probe.veeder_root_atg(ip, port)
+    except probe.ProbeNotAllowed as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    tanks = result.get("atg", {}).get("tanks", [])
+    db.log_audit(
+        username=user, prompt=f"atg {ip}:{port}", query=None,
+        rationale=f"is_atg={result['is_atg']} bytes={result.get('bytes')}",
+        result_total=len(tanks) or None,
+        error=None if result["status"] == "up" else result["status"],
+        action="atg", credits=0,
+    )
+    return result
+
+
 @app.get("/healthz")
 async def healthz():
     # Intentionally minimal: this endpoint is unauthenticated, so it must not
-    # disclose config (bind address, budget, enabled features, user count).
+    # disclose config (bind address, enabled features, user count).
     # The full picture is available to authed callers via /api/info.
     return {"ok": True}

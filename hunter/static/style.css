@@ -298,3 +298,49 @@ button.danger:hover { filter: brightness(1.2); }
 
 /* generic definition rows reused on /scan + /alerts detail */
 dl.kv dd code { word-break: break-all; }
+
+/* export controls (CSV/JSON) on result pages */
+.exports { font-size: 13px; display: inline-flex; gap: 0.5em; align-items: center; }
+.exports a {
+  color: var(--accent);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.1em 0.55em;
+  text-decoration: none;
+}
+.exports a:hover { background: var(--bg-elev2); }
+
+/* loading overlay shown while a search/lookup is in flight */
+.working-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(13, 17, 23, 0.62);
+  backdrop-filter: blur(1px);
+}
+.working-overlay[hidden] { display: none; }
+.working-card {
+  display: flex;
+  align-items: center;
+  gap: 0.8em;
+  padding: 1em 1.5em;
+  font-size: 15px;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.5);
+}
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }

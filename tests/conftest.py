@@ -30,7 +30,7 @@ def isolate_db(tmp_path, monkeypatch):
     ``config.DB_PATH`` is resolved at import and read by ``db._connect()`` on
     every call; ``db._ensure()`` builds the schema once, guarded by the module
     global ``db._inited``. We reset that guard so each temp DB gets its own
-    schema, fully isolating audit/cache/counters/alerts/scan_jobs per test.
+    schema, fully isolating audit/cache/alerts/scan_jobs per test.
     """
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
     # Reset the one-shot schema guard so _ensure() runs against the new file.

@@ -11,6 +11,12 @@
       <span class="chip hp" title="flagged as a honeypot/decoy by Shodan (honeypot tag)">🍯 likely honeypot</span>
     {% endif %}
     <a class="muted" href="?refresh=1">force refresh</a>
+    {% if not host.no_data %}
+    <span class="exports muted">Export
+      <a href="/export/host/{{ ip | urlencode }}?format=csv">CSV</a>
+      <a href="/export/host/{{ ip | urlencode }}?format=json">JSON</a>
+    </span>
+    {% endif %}
   </p>
 </section>
 

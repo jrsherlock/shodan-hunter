@@ -139,23 +139,29 @@ def _sanitize_query(query: str) -> tuple[str, list[str]]:
 _VULN_CAPABLE_PLANS = {
     "plus", "freelancer", "small business", "corporate", "enterprise", "dev",
 }
-_PLAN_CACHE: dict[str, Any] = {"plan": None, "vuln_ok": None, "ts": 0.0}
+# The tag: filter (tag:vpn, tag:cloud, …) is gated to Corporate API and above.
+# On Plus/Freelancer/Small-Business it errors: "The 'tag' filter is only
+# available to Corporate API customers and higher."
+_TAG_CAPABLE_PLANS = {"corporate", "enterprise"}
+_PLAN_CACHE: dict[str, Any] = {"plan": None, "vuln_ok": None, "tag_ok": None, "ts": 0.0}
 _PLAN_CACHE_TTL = 3600.0
 
 
-def _plan_capability() -> tuple[str | None, bool | None]:
-    """Return (plan_name, vuln_filter_available). Cached ~1h. (None, None) on failure."""
+def _plan_capability() -> tuple[str | None, bool | None, bool | None]:
+    """Return (plan_name, vuln_filter_available, tag_filter_available). Cached ~1h.
+    (None, None, None) on failure."""
     now = time.time()
     if now - _PLAN_CACHE["ts"] < _PLAN_CACHE_TTL and _PLAN_CACHE["plan"] is not None:
-        return _PLAN_CACHE["plan"], _PLAN_CACHE["vuln_ok"]
+        return _PLAN_CACHE["plan"], _PLAN_CACHE["vuln_ok"], _PLAN_CACHE["tag_ok"]
     try:
         info = shodan_api.api_info()
     except Exception:
-        return None, None
+        return None, None, None
     plan = (info.get("plan") or "").strip().lower() or None
     vuln_ok = plan in _VULN_CAPABLE_PLANS if plan else None
-    _PLAN_CACHE.update({"plan": plan, "vuln_ok": vuln_ok, "ts": now})
-    return plan, vuln_ok
+    tag_ok = plan in _TAG_CAPABLE_PLANS if plan else None
+    _PLAN_CACHE.update({"plan": plan, "vuln_ok": vuln_ok, "tag_ok": tag_ok, "ts": now})
+    return plan, vuln_ok, tag_ok
 
 
 class LLMNotConfigured(RuntimeError):
@@ -203,11 +209,18 @@ Shodan query syntax cheatsheet:
     ssl.cert.issuer.cn:"Let's Encrypt"
     has_vuln:true                  # paid plan required
     vuln:CVE-2021-44228            # paid plan required for vuln: search
-    tag:vpn                        # tag:cdn, tag:honeypot, tag:cloud, tag:database
+    tag:vpn                        # tag:cdn, tag:honeypot, tag:cloud (Corporate API plan and above ONLY)
     device:"webcam"
     after:"2024-01-01"  before:"2024-12-31"
 - Negate with a leading minus:  -port:80
-- A query is a SPACE-SEPARATED list of filters and free-text terms.
+- A query is a SPACE-SEPARATED list of filters and free-text terms (implicit AND).
+- Boolean OR and parentheses are supported. When you use OR, WRAP the
+  alternatives in parentheses and keep any shared scoping filter OUTSIDE the
+  group:
+    net:203.0.113.0/24 (port:3389 OR port:22)
+    hostname:acme.com (http.title:"login" OR http.title:"admin")
+  NEVER leave a bare OR dangling beside other filters — Shodan rejects
+  `hostname:acme.com http.title:"login" OR http.title:"admin"` as invalid.
 
 Guidance:
 - Prefer specific filters over free text. If the user mentions a company name,
@@ -216,6 +229,10 @@ Guidance:
   named one; otherwise use has_vuln:true. Only emit a plan-related warning
   for these filters if the runtime context below says vuln access is
   unavailable on the current key.
+- The tag: filter (tag:vpn, tag:cloud, …) is Corporate-plan-and-above only.
+  Unless the runtime context below says tag: is available, do NOT use it —
+  express the same intent with product:/port:/http.*/ssl.* (e.g. for "VPN"
+  prefer product:"Fortinet"/"OpenVPN"/port:1194/port:500 over tag:vpn).
 - Never invent specific values (do not guess an org name the user didn't
   give). If the request is too vague to express, return a best-effort query
   and add a warning explaining what you assumed.
@@ -265,11 +282,12 @@ def prompt_to_query(prompt: str) -> dict[str, Any]:
         raise LLMError("empty prompt")
 
     client = _client()
-    plan, vuln_ok = _plan_capability()
+    plan, vuln_ok, tag_ok = _plan_capability()
     if plan is None:
         runtime_ctx = (
             "Runtime context: current Shodan plan is UNKNOWN (api/info call failed). "
-            "Assume default behavior."
+            "Assume default behavior. Avoid the tag: filter (Corporate-only) unless "
+            "the user explicitly asks for it."
         )
     else:
         vuln_line = (
@@ -279,7 +297,14 @@ def prompt_to_query(prompt: str) -> dict[str, Any]:
             f"vuln: and has_vuln: filters are NOT available on the '{plan}' plan — "
             "emit a warning if the query uses them."
         )
-        runtime_ctx = f"Runtime context: current Shodan plan = '{plan}'. {vuln_line}"
+        tag_line = (
+            "The tag: filter IS available on this key."
+            if tag_ok else
+            f"The tag: filter is NOT available on the '{plan}' plan (Corporate API and "
+            "above only) — do NOT emit tag:; express the intent with product:, port:, "
+            "http.*, or ssl.* instead, and omit it if you can't."
+        )
+        runtime_ctx = f"Runtime context: current Shodan plan = '{plan}'. {vuln_line} {tag_line}"
     system_prompt = f"{SYSTEM_PROMPT}\n\n{runtime_ctx}"
     try:
         resp = client.chat.completions.create(

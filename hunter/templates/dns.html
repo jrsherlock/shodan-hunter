@@ -5,7 +5,7 @@
 <h1>Bulk DNS</h1>
 <p class="muted">Forward + reverse DNS via Shodan. Free — no query credits. Paste hostnames and/or IPs separated by commas, spaces, or newlines.</p>
 
-<form method="post" action="/dns">
+<form method="post" action="/dns" data-working="Resolving DNS…">
   <div class="field">
     <textarea class="blob" name="blob" rows="4" placeholder="acme.com, 8.8.8.8, mail.acme.com">{{ blob or '' }}</textarea>
   </div>
@@ -15,6 +15,15 @@
 {% if result %}
   {% if result.invalid %}
     <div class="banner warn">Ignored {{ result.invalid|length }} unrecognized token(s): {{ result.invalid|join(', ') }}</div>
+  {% endif %}
+
+  {% if result.resolve or result.reverse %}
+    <div class="row spread">
+      <span class="exports muted">Export
+        <a href="/export/dns?blob={{ blob | urlencode }}&amp;format=csv">CSV</a>
+        <a href="/export/dns?blob={{ blob | urlencode }}&amp;format=json">JSON</a>
+      </span>
+    </div>
   {% endif %}
 
   {% if result.resolve %}

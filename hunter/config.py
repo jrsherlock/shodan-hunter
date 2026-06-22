@@ -89,9 +89,6 @@ BIND_PORT = _int("SH_PORT", 8000)
 DB_PATH = Path(os.environ.get("SH_DB", "./data/hunter.db")).resolve()
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# Budget
-DAILY_BUDGET = _int("SH_DAILY_BUDGET", 200)
-
 # Cache TTL for repeat searches (seconds)
 SEARCH_CACHE_TTL = _int("SH_SEARCH_CACHE_TTL", 600)
 HOST_CACHE_TTL = _int("SH_HOST_CACHE_TTL", 3600)
@@ -140,7 +137,6 @@ def status() -> dict:
         "azure_openai": bool(AZURE_ENDPOINT and AZURE_API_KEY and AZURE_DEPLOYMENT),
         "auth_users_count": len(AUTH_USERS),
         "bind": f"{BIND_HOST}:{BIND_PORT}",
-        "daily_budget": DAILY_BUDGET,
         "scan_enabled": SCAN_ENABLED,
         "scan_allowlisted": len(SCAN_ALLOWLIST),
         "alerts_enabled": ALERTS_ENABLED,

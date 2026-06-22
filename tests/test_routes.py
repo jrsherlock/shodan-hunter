@@ -24,7 +24,7 @@ def test_healthz_no_auth(api_info_stub):
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    # Unauthenticated endpoint must not leak config (bind, budget, features…).
+    # Unauthenticated endpoint must not leak config (bind, features…).
     assert body == {"ok": True}
 
 

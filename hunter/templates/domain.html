@@ -4,7 +4,7 @@
 
 <h1>Domain recon</h1>
 
-<form method="get" action="/domain">
+<form method="get" action="/domain" data-working="Looking up domain…">
   <div class="field">
     <label>Domain</label>
     <input class="text" name="q" value="{{ domain or '' }}" placeholder="acme.com" autofocus>
@@ -24,6 +24,12 @@
         <span class="chip warn">1 credit spent</span>
       {% endif %}
       <span class="muted">{{ domain_data.subdomains | length }} subdomains</span>
+      {% if domain_data.data %}
+      <span class="exports muted">Export
+        <a href="/export/domain?q={{ domain_data.domain | urlencode }}&amp;format=csv">CSV</a>
+        <a href="/export/domain?q={{ domain_data.domain | urlencode }}&amp;format=json">JSON</a>
+      </span>
+      {% endif %}
     </span>
   </div>
 
