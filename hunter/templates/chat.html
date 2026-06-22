@@ -66,10 +66,10 @@
   {% if facets %}
   <div class="facets">
     {% for g in facets %}
-      {% if g.items %}
+      {% if g['items'] %}
       <div class="facet-group">
         <h3>{{ g.label }}</h3>
-        {% for it in g.items[:8] %}
+        {% for it in g['items'][:8] %}
           <div class="facet-row">
             <span class="facet-label" title="{{ it.value }}">{{ it.value }}</span>
             <span class="facet-track"><span class="facet-fill" style="width: {{ it.pct }}%"></span></span>
