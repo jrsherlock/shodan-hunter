@@ -13,6 +13,23 @@
 </form>
 <p class="muted small">Saved searches shared by the Shodan community. Free to browse. Click Run to execute one.</p>
 
+{% if tags %}
+  <div class="tagbar">
+    <span class="muted small">Categories:</span>
+    {% for t in tags %}
+      <a class="chip" href="/library?q={{ t.value | urlencode }}">{{ t.value }}{% if t.count %} <span class="muted small">{{ t.count }}</span>{% endif %}</a>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if not q %}
+  <div class="row small">
+    <span class="muted">Sort:</span>
+    <a href="/library?sort=votes"{% if sort == 'votes' %} class="active"{% endif %}>▲ Top Voted</a>
+    <a href="/library?sort=timestamp"{% if sort == 'timestamp' %} class="active"{% endif %}>🕒 Recently Added</a>
+  </div>
+{% endif %}
+
 {% if library_error %}
   <div class="banner bad">{{ library_error }}</div>
 {% endif %}
@@ -41,10 +58,10 @@
 
   <div class="row">
     {% if page > 1 %}
-      <a href="/library?q={{ q }}&page={{ page - 1 }}">← previous</a>
+      <a href="/library?q={{ q }}&sort={{ sort }}&page={{ page - 1 }}">← previous</a>
     {% endif %}
     {% if items | length == 10 %}
-      <a href="/library?q={{ q }}&page={{ page + 1 }}">next →</a>
+      <a href="/library?q={{ q }}&sort={{ sort }}&page={{ page + 1 }}">next →</a>
     {% endif %}
   </div>
 

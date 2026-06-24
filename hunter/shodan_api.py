@@ -415,6 +415,21 @@ def community_queries(page: int = 1, sort: str = "votes", order: str = "desc",
     return data
 
 
+def community_tags(size: int = 20, *, use_cache: bool = True) -> dict[str, Any]:
+    """Most popular tags in the community query directory (the Explore categories)."""
+    key = f"size={size}"
+    if use_cache:
+        hit = db.cache_get("query_tags", key)
+        if hit is not None:
+            return hit
+    try:
+        data = _api().queries_tags(size=size)
+    except shodan.APIError as e:
+        raise ShodanError(f"community tags failed: {e}") from e
+    db.cache_put("query_tags", key, data, config.QUERIES_CACHE_TTL)
+    return data
+
+
 def query_search(query: str, page: int = 1, *, use_cache: bool = True) -> dict[str, Any]:
     """Search the community query directory."""
     q = _qkey(query)
